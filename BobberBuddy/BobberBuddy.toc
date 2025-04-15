@@ -1,0 +1,10 @@
+## Interface: 11507
+## Title: Bobber Buddy
+## Notes: A simple addon to help you fish
+## Version: 1.0.0
+## Author: Pa_nts
+## DefaultState: enabled
+
+FishingLures.lua
+BobberBuddy.lua
+
