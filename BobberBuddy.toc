@@ -7,8 +7,10 @@
 ## OptionalDeps: Ace3
 ## X-Embeds: Ace3
 
-Core.lua
+Bindings.xml
+UI.xml
+Database.lua
 FishTracker.lua
 UI.lua
 Settings.lua
-UI.xml
+Core.lua

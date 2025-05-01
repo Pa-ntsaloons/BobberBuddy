@@ -7,20 +7,38 @@ local BB = BobberBuddy
 
 -- Initialize fish tracking system
 function BB:InitFishTracker()
-    -- Initialize fish data table if not exists
-    if not self.db.fishCaught then
-        self.db.fishCaught = {}
-    end
-    
-    -- Track fish caught during the current session
-    self.sessionFishCaught = {}
-    
-    -- Set up loot event handling
+    -- Set up additional loot event handling
     local frame = CreateFrame("Frame")
     frame:RegisterEvent("CHAT_MSG_LOOT")
     frame:SetScript("OnEvent", function(self, event, ...)
         if event == "CHAT_MSG_LOOT" then
             BB:ProcessLootMessage(...)
+        end
+    end)
+    
+    -- Also register for fishing events
+    frame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
+    frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+    frame:RegisterEvent("UNIT_SPELLCAST_FAILED")
+    frame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
+    frame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
+    
+    frame:HookScript("OnEvent", function(self, event, unit, _, spellID)
+        if unit ~= "player" then return end
+        
+        local fishingID = BB.isRetail and FISHING_SPELL_ID or FISHING_SPELL_ID_CLASSIC
+        
+        if event == "UNIT_SPELLCAST_CHANNEL_START" and spellID == fishingID then
+            -- Started fishing
+            BB:TrackFishingCast()
+        elseif event == "UNIT_SPELLCAST_SUCCEEDED" and spellID == fishingID then
+            -- Successful cast
+        elseif (event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_INTERRUPTED") and spellID == fishingID then
+            -- Failed cast
+            BB:TrackFishingEnd(false)
+        elseif event == "UNIT_SPELLCAST_CHANNEL_STOP" and spellID == fishingID then
+            -- Stopped fishing
+            -- Note: This will also fire when fish is caught, but we'll handle that in loot events
         end
     end)
 end
@@ -49,7 +67,17 @@ function BB:ProcessLootMessage(message)
                                      string.find(itemName:lower(), "crab") or
                                      string.find(itemName:lower(), "mackeral") or
                                      string.find(itemName:lower(), "herring"))) then
-                    self:AddFishCaught(itemName, quantity)
+                    -- Add to database with zone tracking
+                    local currentZone = self.cache.lastZone or GetRealZoneText() or "Unknown"
+                    self:AddFishToDatabase(itemName, quantity, currentZone)
+                    
+                    -- Mark fishing as ended successfully
+                    if self.cache.isFishing then
+                        self:TrackFishingEnd(true)
+                    end
+                    
+                    -- Print message to chat to confirm catch
+                    print("|cFF80FF80BobberBuddy|r: Caught " .. quantity .. "x " .. itemName .. " in " .. currentZone)
                 end
             end
         end

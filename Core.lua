@@ -56,46 +56,118 @@ local FISHING_POLE_TYPES = {
 
 -- Initialize the addon
 function BB:Init()
-    -- Set up saved variables
-    if not BobberBuddyDB then
-        BobberBuddyDB = {}
-    end
-    
-    -- Initialize settings with defaults for missing values
-    for key, value in pairs(self.defaults) do
-        if BobberBuddyDB[key] == nil then
-            BobberBuddyDB[key] = value
-        end
-    end
-    
-    self.db = BobberBuddyDB
-    
     -- Register events
     local frame = CreateFrame("Frame")
     frame:RegisterEvent("ADDON_LOADED")
     frame:RegisterEvent("LOOT_OPENED")
+    frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+    frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+    frame:RegisterEvent("PLAYER_LOGOUT")
     frame:SetScript("OnEvent", function(self, event, ...)
         if event == "ADDON_LOADED" and ... == BB.name then
             BB:OnAddonLoaded()
         elseif event == "LOOT_OPENED" then
             BB:OnLootOpened()
+        elseif event == "PLAYER_EQUIPMENT_CHANGED" then
+            BB:OnEquipmentChanged(...)
+        elseif event == "ZONE_CHANGED_NEW_AREA" then
+            BB:OnZoneChanged()
+        elseif event == "PLAYER_LOGOUT" then
+            BB:OnLogout()
         end
     end)
     
     -- Set up fishing hotkey
     self:SetupHotkey()
+end
+
+-- Handle hotkey press (called from bindings)
+function BB:OnHotkey()
+    -- This function is called from the keybind in Bindings.xml
     
-    -- Initialize modules
-    self:InitFishTracker()
-    self:InitUI()
-    self:InitSettings()
+    -- If bobber is already present, try to click it
+    if self:IsBobberTarget() then
+        self:ClickBobber()
+        return
+    end
     
-    print("|cFF80FF80" .. self.name .. " v" .. self.version .. " loaded. Type /bb or /bobberbuddy for options.|r")
+    -- Check if we need to equip a fishing pole
+    if not self:IsFishingPoleEquipped() then
+        self:EquipBestFishingPole()
+    end
+    
+    -- Check if we need to apply a lure
+    local enableAutoLure = self:GetSetting("enableAutoLure")
+    if enableAutoLure and not self:HasActiveLure() then
+        local lureApplied = self:ApplyBestLure()
+        if lureApplied then
+            self:TrackLureUsage()
+        end
+    end
+    
+    -- Cast fishing
+    local fishingSpellID = self.isRetail and FISHING_SPELL_ID or FISHING_SPELL_ID_CLASSIC
+    CastSpellByID(fishingSpellID)
+    self:TrackFishingCast()
+    
+    -- Set up post-cast action for bobber clicking
+    local enableAutoBobberClick = self:GetSetting("enableAutoBobberClick")
+    if enableAutoBobberClick then
+        C_Timer.After(0.5, function() self:WatchForBobber() end)
+    end
 end
 
 -- Called when addon is fully loaded
 function BB:OnAddonLoaded()
-    -- Additional initialization if needed
+    -- Initialize database first
+    self:InitDatabase()
+    
+    -- Initialize modules after all files are loaded
+    self:InitFishTracker()
+    self:InitUI()
+    self:InitSettings()
+    
+    -- Check for fishing pole equipped
+    self:CheckEquippedFishingPole()
+    
+    -- Check current zone
+    self.cache.lastZone = GetRealZoneText() or "Unknown"
+    
+    print("|cFF80FF80" .. self.name .. " v" .. self.version .. " loaded. Type /bb or /bobberbuddy for options.|r")
+end
+
+-- Called when player changes equipment
+function BB:OnEquipmentChanged(slot)
+    if slot == 16 or slot == 17 then -- Main hand or offhand
+        self:CheckEquippedFishingPole()
+    end
+end
+
+-- Check if fishing pole is equipped and update tracking
+function BB:CheckEquippedFishingPole()
+    self.cache.fishingPoleEquipped = self:IsFishingPoleEquipped()
+end
+
+-- Called when player changes zone
+function BB:OnZoneChanged()
+    local currentZone = GetRealZoneText() or "Unknown"
+    self.cache.lastZone = currentZone
+end
+
+-- Called when player logs out
+function BB:OnLogout()
+    -- Save session time
+    if self.db and self.db.stats then
+        local sessionDuration = time() - (self.db.stats.sessionStartTime or time())
+        if sessionDuration > 0 then
+            self.db.stats.totalPlayTime = (self.db.stats.totalPlayTime or 0) + sessionDuration
+        end
+    end
+    
+    -- If currently fishing, track fishing time
+    if self.cache.isFishing and self.cache.fishingStart > 0 then
+        self:TrackFishingEnd(false)
+    end
 end
 
 -- Create keybinding for fishing
@@ -135,13 +207,58 @@ function BB:HandleSlashCommand(msg)
         print("  |cFFFFFF00/bb toggle|r - Toggle fish tracker display")
         print("  |cFFFFFF00/bb reset|r - Reset fish tracker position")
         print("  |cFFFFFF00/bb config|r - Open configuration panel")
+        print("  |cFFFFFF00/bb stats|r - Show fishing statistics")
+        print("  |cFFFFFF00/bb clear|r - Clear session fish data")
+        print("  |cFFFFFF00/bb clearall|r - Clear all fish tracking data")
     elseif args[1] == "toggle" then
-        self.db.showTracker = not self.db.showTracker
+        self:SetSetting("showTracker", not self:GetSetting("showTracker"))
         self:UpdateTrackerVisibility()
     elseif args[1] == "reset" then
         self:ResetTrackerPosition()
     elseif args[1] == "config" then
         self:OpenSettings()
+    elseif args[1] == "stats" then
+        self:ShowFishingStats()
+    elseif args[1] == "clear" then
+        print("|cFF80FF80BobberBuddy|r: Clearing session fish data...")
+        self:ClearSessionData()
+    elseif args[1] == "clearall" then
+        StaticPopup_Show("BOBBERBUDDY_CONFIRM_RESET")
+    end
+end
+
+-- Show fishing statistics
+function BB:ShowFishingStats()
+    local sessionTotal = self:GetSessionTotal()
+    local lifetimeTotal = self:GetLifetimeTotal()
+    local casts = self.db.stats.fishingCasts or 0
+    local timeSpent = self.db.stats.timeSpentFishing or 0
+    local luresUsed = self.db.stats.luresUsed or 0
+    local currentZone = self.cache.lastZone or GetRealZoneText() or "Unknown"
+    
+    print("|cFF80FF80BobberBuddy Statistics:|r")
+    print("Session fish caught: " .. sessionTotal)
+    print("Lifetime fish caught: " .. lifetimeTotal)
+    print("Total fishing casts: " .. casts)
+    print("Time spent fishing: " .. SecondsToTime(timeSpent))
+    print("Lures used: " .. luresUsed)
+    print("Current zone: " .. currentZone)
+    
+    -- Show top 3 fish for current zone
+    local zoneFish = self:GetZoneFishData(currentZone)
+    if next(zoneFish) then
+        print("\nTop fish in " .. currentZone .. ":")
+        
+        local sortedFish = {}
+        for fish, count in pairs(zoneFish) do
+            table.insert(sortedFish, {name = fish, count = count})
+        end
+        
+        table.sort(sortedFish, function(a,b) return a.count > b.count end)
+        
+        for i = 1, math.min(3, #sortedFish) do
+            print(i .. ". " .. sortedFish[i].name .. ": " .. sortedFish[i].count)
+        end
     end
 end
 
@@ -377,6 +494,7 @@ end
 -- Handle a successful fishing catch
 function BB:OnLootOpened()
     local numItems = GetNumLootItems()
+    local fishCaught = false
     
     for i = 1, numItems do
         local lootIcon, lootName, lootQuantity = GetLootSlotInfo(i)
@@ -396,10 +514,17 @@ function BB:OnLootOpened()
                                 string.find(lootName:lower(), "mackeral") or
                                 string.find(lootName:lower(), "herring"))) then
                 
-                -- Add to fish tracker
-                self:AddFishCaught(lootName, lootQuantity)
+                -- Add to fish tracker database
+                local currentZone = self.cache.lastZone or GetRealZoneText() or "Unknown"
+                self:AddFishToDatabase(lootName, lootQuantity, currentZone)
+                fishCaught = true
             end
         end
+    end
+    
+    -- Track fishing end with success
+    if fishCaught and self.cache.isFishing then
+        self:TrackFishingEnd(true)
     end
 end
 
