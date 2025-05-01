@@ -1,0 +1,14 @@
+## Interface: 100200
+## Title: BobberBuddy
+## Notes: Enhances fishing by automating pole/lure management, casting, and bobber interaction with a single hotkey
+## Author: Pa_nts
+## Version: 1.0
+## SavedVariables: BobberBuddyDB
+## OptionalDeps: Ace3
+## X-Embeds: Ace3
+
+Core.lua
+FishTracker.lua
+UI.lua
+Settings.lua
+UI.xml
