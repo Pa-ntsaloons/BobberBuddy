@@ -1,0 +1,10 @@
+<Bindings>
+<<<<<<< HEAD
+    <Binding name="Fish" category="Bobber Buddy">
+        BobberBuddy_SetupHotKey()
+=======
+    <Binding name="BOBBERBUDDY_FISHING" header="BOBBERBUDDY" category="ADDONS">
+        BobberBuddy:OnHotkey()
+>>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
+    </Binding>
+</Bindings>
