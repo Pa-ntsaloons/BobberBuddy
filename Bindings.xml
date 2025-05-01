@@ -1,5 +1,0 @@
-<Bindings>
-    <Binding name="BOBBERBUDDYKEY" category="Bobber Buddy">
-        BobberBuddy_Fish()
-    </Binding>
-</Bindings>
