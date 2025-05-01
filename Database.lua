@@ -3,11 +3,8 @@
     Handles all saved variables and persistent data storage
 ]]
 
-<<<<<<< HEAD
 -- Check if addon is loaded and create local reference
 BobberBuddy = BobberBuddy or {}
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
 local BB = BobberBuddy
 
 -- Default database structure
@@ -243,15 +240,12 @@ end
 -- Track stats about fishing
 function BB:TrackFishingCast()
     self.db.stats.fishingCasts = self.db.stats.fishingCasts + 1
-<<<<<<< HEAD
     
     -- Ensure cache exists
     if not self.cache then
         self.cache = {}
     end
     
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     self.cache.fishingStart = time()
     self.cache.isFishing = true
 end
@@ -263,16 +257,12 @@ end
 
 -- Track end of fishing
 function BB:TrackFishingEnd(success)
-<<<<<<< HEAD
     -- Ensure cache exists
     if not self.cache then
         self.cache = {}
     end
     
     if self.cache.isFishing and self.cache.fishingStart and self.cache.fishingStart > 0 then
-=======
-    if self.cache.isFishing and self.cache.fishingStart > 0 then
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
         local duration = time() - self.cache.fishingStart
         self.db.stats.timeSpentFishing = self.db.stats.timeSpentFishing + duration
         self.cache.isFishing = false

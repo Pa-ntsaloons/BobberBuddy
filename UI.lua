@@ -3,11 +3,8 @@
     Handles the fish tracker display and UI interactions
 ]]
 
-<<<<<<< HEAD
 -- Check if addon is loaded and create local reference
 BobberBuddy = BobberBuddy or {}
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
 local BB = BobberBuddy
 
 -- Initialize UI components
@@ -15,15 +12,12 @@ function BB:InitUI()
     -- Create main frame
     self.ui = {}
     
-<<<<<<< HEAD
     -- Check if we're in WoW environment
     if not CreateFrame then
         print("BobberBuddy: Not running in WoW environment, skipping UI initialization")
         return
     end
     
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     -- Create tracker frame
     self:CreateTrackerFrame()
     
@@ -37,23 +31,17 @@ function BB:CreateTrackerFrame()
     self.ui.trackerFrame = frame
     
     -- Set frame properties
-<<<<<<< HEAD
     frame:SetSize(240, 280) -- Larger to accommodate more info
     
     -- Get saved position or use default
     local position = self:GetSetting("trackerPosition") or {"RIGHT", UIParent, "RIGHT", -50, 0}
     frame:SetPoint(position[1], position[2], position[3], position[4], position[5])
     
-=======
-    frame:SetSize(200, 220)
-    frame:SetPoint("RIGHT", UIParent, "RIGHT", -50, 0)
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     frame:SetFrameStrata("MEDIUM")
     frame:SetMovable(true)
     frame:EnableMouse(true)
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", frame.StartMoving)
-<<<<<<< HEAD
     frame:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
         
@@ -61,9 +49,6 @@ function BB:CreateTrackerFrame()
         local point, relativeTo, relativePoint, xOfs, yOfs = self:GetPoint()
         BB:SetSetting("trackerPosition", {point, relativeTo, relativePoint, xOfs, yOfs})
     end)
-=======
-    frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     
     -- Set backdrop
     frame:SetBackdrop({
@@ -78,7 +63,6 @@ function BB:CreateTrackerFrame()
     -- Create title text
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", frame, "TOPLEFT", 15, -15)
-<<<<<<< HEAD
     title:SetText("BobberBuddy")
     self.ui.title = title
     
@@ -91,14 +75,6 @@ function BB:CreateTrackerFrame()
     -- Create session text
     local sessionText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     sessionText:SetPoint("TOPLEFT", zoneText, "BOTTOMLEFT", 0, -5)
-=======
-    title:SetText("BobberBuddy Fish Tracker")
-    self.ui.title = title
-    
-    -- Create session text
-    local sessionText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    sessionText:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -5)
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     sessionText:SetText("Session Catches: 0")
     self.ui.sessionText = sessionText
     
@@ -108,7 +84,6 @@ function BB:CreateTrackerFrame()
     totalText:SetText("Total Catches: 0")
     self.ui.totalText = totalText
     
-<<<<<<< HEAD
     -- Create fishing stats
     local statsText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     statsText:SetPoint("TOPLEFT", totalText, "BOTTOMLEFT", 0, -5)
@@ -124,11 +99,6 @@ function BB:CreateTrackerFrame()
     -- Create scroll frame for fish list
     local scrollFrame = CreateFrame("ScrollFrame", "BobberBuddyScrollFrame", frame, "UIPanelScrollFrameTemplate")
     scrollFrame:SetPoint("TOPLEFT", sessionLabel, "BOTTOMLEFT", 0, -5)
-=======
-    -- Create scroll frame for fish list
-    local scrollFrame = CreateFrame("ScrollFrame", "BobberBuddyScrollFrame", frame, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", totalText, "BOTTOMLEFT", 0, -10)
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 35)
     self.ui.scrollFrame = scrollFrame
     
@@ -147,7 +117,6 @@ function BB:CreateTrackerFrame()
     clearButton:SetSize(90, 24)
     clearButton:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 10, 8)
     clearButton:SetText("Clear Session")
-<<<<<<< HEAD
     clearButton:SetScript("OnClick", function() BB:ClearSessionData() end)
     
     -- Create settings button
@@ -156,35 +125,16 @@ function BB:CreateTrackerFrame()
     settingsButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -10, 8)
     settingsButton:SetText("Settings")
     settingsButton:SetScript("OnClick", function() BB:OpenSettings() end)
-=======
-    clearButton:SetScript("OnClick", function() BB:ClearSessionFishCount() end)
-    
-    -- Create reset all button
-    local resetButton = CreateFrame("Button", "BobberBuddyResetButton", frame, "UIPanelButtonTemplate")
-    resetButton:SetSize(90, 24)
-    resetButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -10, 8)
-    resetButton:SetText("Reset All")
-    resetButton:SetScript("OnClick", function()
-        StaticPopup_Show("BOBBERBUDDY_CONFIRM_RESET")
-    end)
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     
     -- Register escape key to close
     table.insert(UISpecialFrames, "BobberBuddyTrackerFrame")
     
     -- Create confirmation dialog for reset
     StaticPopupDialogs["BOBBERBUDDY_CONFIRM_RESET"] = {
-<<<<<<< HEAD
         text = "Are you sure you want to reset all fish tracking data?\nThis cannot be undone!",
         button1 = "Yes",
         button2 = "No",
         OnAccept = function() BB:ClearAllData() end,
-=======
-        text = "Are you sure you want to reset all fish tracking data?",
-        button1 = "Yes",
-        button2 = "No",
-        OnAccept = function() BB:ClearAllFishCount() end,
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
@@ -199,7 +149,6 @@ end
 function BB:UpdateFishTrackerUI()
     if not self.ui or not self.ui.trackerFrame then return end
     
-<<<<<<< HEAD
     -- Update zone information
     local currentZone = self.cache.lastZone or GetRealZoneText() or "Unknown"
     self.ui.zoneText:SetText("Zone: " .. currentZone)
@@ -218,14 +167,6 @@ function BB:UpdateFishTrackerUI()
     
     -- Get fish data
     local fishData = self:GetSortedSessionFish()
-=======
-    -- Update session and total counts
-    self.ui.sessionText:SetText("Session Catches: " .. self:GetSessionTotalFishCount())
-    self.ui.totalText:SetText("Total Catches: " .. self:GetTotalFishCount())
-    
-    -- Get fish data
-    local fishData = self:GetFishDisplayData()
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     
     -- Clear existing list items
     for _, item in ipairs(self.ui.listItems or {}) do
@@ -243,11 +184,7 @@ function BB:UpdateFishTrackerUI()
             local nameText = item:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
             nameText:SetPoint("LEFT", item, "LEFT", 5, 0)
             nameText:SetJustifyH("LEFT")
-<<<<<<< HEAD
             nameText:SetWidth(150)
-=======
-            nameText:SetWidth(120)
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
             item.nameText = nameText
             
             local countText = item:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
@@ -269,7 +206,6 @@ function BB:UpdateFishTrackerUI()
         yOffset = yOffset + 20
     end
     
-<<<<<<< HEAD
     -- Show a message if no fish caught
     if #fishData == 0 then
         -- Create placeholder text if it doesn't exist
@@ -290,22 +226,14 @@ function BB:UpdateFishTrackerUI()
     
     -- Update content frame height
     local contentHeight = max(yOffset + 5, 80)
-=======
-    -- Update content frame height
-    local contentHeight = max(yOffset + 5, 50)
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     self.ui.content:SetHeight(contentHeight)
 end
 
 -- Toggle tracker visibility
 function BB:UpdateTrackerVisibility()
     if self.ui and self.ui.trackerFrame then
-<<<<<<< HEAD
         local showTracker = self:GetSetting("showTracker")
         if showTracker then
-=======
-        if self.db.showTracker then
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
             self.ui.trackerFrame:Show()
         else
             self.ui.trackerFrame:Hide()
@@ -318,14 +246,11 @@ function BB:ResetTrackerPosition()
     if self.ui and self.ui.trackerFrame then
         self.ui.trackerFrame:ClearAllPoints()
         self.ui.trackerFrame:SetPoint("RIGHT", UIParent, "RIGHT", -50, 0)
-<<<<<<< HEAD
         
         -- Save the new position
         local point, relativeTo, relativePoint, xOfs, yOfs = self.ui.trackerFrame:GetPoint()
         self:SetSetting("trackerPosition", {point, relativeTo, relativePoint, xOfs, yOfs})
         
         print("|cFF80FF80BobberBuddy|r: Tracker position has been reset.")
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     end
 end

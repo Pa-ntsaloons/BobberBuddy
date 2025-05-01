@@ -7,7 +7,6 @@
 BobberBuddy = {}
 local BB = BobberBuddy
 BB.name = "BobberBuddy"
-<<<<<<< HEAD
 
 -- Check if we're running in WoW environment
 if GetAddOnMetadata then
@@ -45,13 +44,6 @@ if not SecondsToTime then
         end
     end
 end
-=======
-BB.version = GetAddOnMetadata("BobberBuddy", "Version")
-BB.isRetail = WOW_PROJECT_ID == WOW_PROJECT_MAINLINE
-BB.isClassic = WOW_PROJECT_ID == WOW_PROJECT_CLASSIC
-BB.isTBC = WOW_PROJECT_ID == WOW_PROJECT_BURNING_CRUSADE_CLASSIC
-BB.isWrath = WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
 
 -- Default settings
 BB.defaults = {
@@ -96,15 +88,12 @@ local FISHING_POLE_TYPES = {
 
 -- Initialize the addon
 function BB:Init()
-<<<<<<< HEAD
     -- Check if we're in WoW environment
     if not CreateFrame then
         print("BobberBuddy: Not running in WoW environment, skipping initialization")
         return
     end
     
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     -- Register events
     local frame = CreateFrame("Frame")
     frame:RegisterEvent("ADDON_LOADED")
@@ -168,14 +157,11 @@ end
 
 -- Called when addon is fully loaded
 function BB:OnAddonLoaded()
-<<<<<<< HEAD
     -- Initialize cache
     if not self.cache then
         self.cache = {}
     end
     
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     -- Initialize database first
     self:InitDatabase()
     
@@ -202,29 +188,23 @@ end
 
 -- Check if fishing pole is equipped and update tracking
 function BB:CheckEquippedFishingPole()
-<<<<<<< HEAD
     -- Ensure cache exists
     if not self.cache then
         self.cache = {}
     end
     
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     self.cache.fishingPoleEquipped = self:IsFishingPoleEquipped()
 end
 
 -- Called when player changes zone
 function BB:OnZoneChanged()
     local currentZone = GetRealZoneText() or "Unknown"
-<<<<<<< HEAD
     
     -- Make sure cache exists before using it
     if not self.cache then
         self.cache = {}
     end
     
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     self.cache.lastZone = currentZone
 end
 
@@ -238,7 +218,6 @@ function BB:OnLogout()
         end
     end
     
-<<<<<<< HEAD
     -- Ensure cache exists
     if not self.cache then
         self.cache = {}
@@ -246,25 +225,18 @@ function BB:OnLogout()
     
     -- If currently fishing, track fishing time
     if self.cache.isFishing and self.cache.fishingStart and self.cache.fishingStart > 0 then
-=======
-    -- If currently fishing, track fishing time
-    if self.cache.isFishing and self.cache.fishingStart > 0 then
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
         self:TrackFishingEnd(false)
     end
 end
 
 -- Create keybinding for fishing
 function BB:SetupHotkey()
-<<<<<<< HEAD
     -- Check if we're in WoW environment
     if not CreateFrame then
         print("BobberBuddy: Not running in WoW environment, skipping hotkey setup")
         return
     end
     
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     -- Create fishing secure button
     local fishingButton = CreateFrame("Button", "BobberBuddyFishingButton", nil, "SecureActionButtonTemplate")
     fishingButton:SetAttribute("type", "macro")
@@ -302,13 +274,9 @@ function BB:HandleSlashCommand(msg)
         print("  |cFFFFFF00/bb config|r - Open configuration panel")
         print("  |cFFFFFF00/bb stats|r - Show fishing statistics")
         print("  |cFFFFFF00/bb clear|r - Clear session fish data")
-<<<<<<< HEAD
         print("  |cFFFFFF00/bb clearall|r - Clear all fish tracking data (with confirmation)")
         print("  |cFFFFFF00/bb clearnow|r - Clear all fish tracking data (no confirmation)")
         print("\nBobberBuddy v" .. self.version .. " - Fishing utility addon")
-=======
-        print("  |cFFFFFF00/bb clearall|r - Clear all fish tracking data")
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     elseif args[1] == "toggle" then
         self:SetSetting("showTracker", not self:GetSetting("showTracker"))
         self:UpdateTrackerVisibility()
@@ -322,7 +290,6 @@ function BB:HandleSlashCommand(msg)
         print("|cFF80FF80BobberBuddy|r: Clearing session fish data...")
         self:ClearSessionData()
     elseif args[1] == "clearall" then
-<<<<<<< HEAD
         if StaticPopup_Show then
             StaticPopup_Show("BOBBERBUDDY_CONFIRM_RESET")
         else
@@ -332,9 +299,6 @@ function BB:HandleSlashCommand(msg)
     elseif args[1] == "clearnow" then
         print("BobberBuddy: Clearing all fish data...")
         self:ClearAllData()
-=======
-        StaticPopup_Show("BOBBERBUDDY_CONFIRM_RESET")
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     end
 end
 
@@ -345,15 +309,12 @@ function BB:ShowFishingStats()
     local casts = self.db.stats.fishingCasts or 0
     local timeSpent = self.db.stats.timeSpentFishing or 0
     local luresUsed = self.db.stats.luresUsed or 0
-<<<<<<< HEAD
     
     -- Ensure cache exists
     if not self.cache then
         self.cache = {}
     end
     
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     local currentZone = self.cache.lastZone or GetRealZoneText() or "Unknown"
     
     print("|cFF80FF80BobberBuddy Statistics:|r")
@@ -616,14 +577,11 @@ function BB:OnLootOpened()
     local numItems = GetNumLootItems()
     local fishCaught = false
     
-<<<<<<< HEAD
     -- Ensure cache exists
     if not self.cache then
         self.cache = {}
     end
     
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     for i = 1, numItems do
         local lootIcon, lootName, lootQuantity = GetLootSlotInfo(i)
         local lootLink = GetLootSlotLink(i)

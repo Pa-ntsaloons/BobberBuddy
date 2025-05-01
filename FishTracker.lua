@@ -3,7 +3,6 @@
     Tracks fish caught during the session
 ]]
 
-<<<<<<< HEAD
 -- Check if addon is loaded and create local reference
 BobberBuddy = BobberBuddy or {}
 local BB = BobberBuddy
@@ -11,10 +10,6 @@ local BB = BobberBuddy
 -- Initialize session tracking
 BB.sessionFishCaught = {}
 
-=======
-local BB = BobberBuddy
-
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
 -- Initialize fish tracking system
 function BB:InitFishTracker()
     -- Set up additional loot event handling
@@ -138,7 +133,6 @@ end
 -- Get total fish caught in current session
 function BB:GetSessionTotalFishCount()
     local total = 0
-<<<<<<< HEAD
     
     -- Ensure sessionFishCaught exists
     if not self.sessionFishCaught then
@@ -146,8 +140,6 @@ function BB:GetSessionTotalFishCount()
         return 0
     end
     
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     for _, count in pairs(self.sessionFishCaught) do
         total = total + count
     end
@@ -157,15 +149,12 @@ end
 -- Get total fish caught all-time
 function BB:GetTotalFishCount()
     local total = 0
-<<<<<<< HEAD
     
     -- Ensure db and fishCaught exist
     if not self.db or not self.db.fishCaught then
         return 0
     end
     
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     for _, count in pairs(self.db.fishCaught) do
         total = total + count
     end
@@ -174,7 +163,6 @@ end
 
 -- Clear session fish count
 function BB:ClearSessionFishCount()
-<<<<<<< HEAD
     -- Ensure sessionFishCaught exists
     self.sessionFishCaught = {}
     
@@ -182,15 +170,10 @@ function BB:ClearSessionFishCount()
     if self.UpdateFishTrackerUI then
         self:UpdateFishTrackerUI()
     end
-=======
-    self.sessionFishCaught = {}
-    self:UpdateFishTrackerUI()
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
 end
 
 -- Clear all fish count
 function BB:ClearAllFishCount()
-<<<<<<< HEAD
     -- Ensure db exists
     if not self.db then
         return
@@ -212,11 +195,6 @@ function BB:ClearAllFishCount()
         self.db.fishZones = {}
     end
     
-=======
-    self.db.fishCaught = {}
-    self.sessionFishCaught = {}
-    self.db.fishZones = {}
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     self:UpdateFishTrackerUI()
 end
 
@@ -224,15 +202,12 @@ end
 function BB:GetFishDisplayData()
     local fishData = {}
     
-<<<<<<< HEAD
     -- Ensure sessionFishCaught exists
     if not self.sessionFishCaught then
         self.sessionFishCaught = {}
         return fishData
     end
     
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     -- Convert hash table to sortable array
     for fish, count in pairs(self.sessionFishCaught) do
         table.insert(fishData, {name = fish, count = count})

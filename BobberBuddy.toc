@@ -9,16 +9,8 @@
 
 Bindings.xml
 UI.xml
-<<<<<<< HEAD
 Core.lua
 Database.lua
 FishTracker.lua
 UI.lua
 Settings.lua
-=======
-Database.lua
-FishTracker.lua
-UI.lua
-Settings.lua
-Core.lua
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f

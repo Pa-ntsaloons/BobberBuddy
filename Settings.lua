@@ -3,16 +3,12 @@
     Handles the addon configuration panel
 ]]
 
-<<<<<<< HEAD
 -- Check if addon is loaded and create local reference
 BobberBuddy = BobberBuddy or {}
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
 local BB = BobberBuddy
 
 -- Initialize settings panel
 function BB:InitSettings()
-<<<<<<< HEAD
     -- Check if we're in WoW environment
     if not CreateFrame then
         print("BobberBuddy: Not running in WoW environment, skipping UI initialization")
@@ -29,12 +25,6 @@ function BB:InitSettings()
     else
         print("BobberBuddy: InterfaceOptions_AddCategory not available")
     end
-=======
-    -- Create main options panel
-    self.optionsPanel = CreateFrame("Frame", "BobberBuddyOptionsPanel")
-    self.optionsPanel.name = "BobberBuddy"
-    InterfaceOptions_AddCategory(self.optionsPanel)
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     
     -- Title
     local title = self.optionsPanel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
@@ -49,7 +39,6 @@ function BB:InitSettings()
     local lastElement = version
     local yOffset = -20
     
-<<<<<<< HEAD
     -- Settings scope selection
     local scopeTitle = self.optionsPanel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     scopeTitle:SetPoint("TOPLEFT", lastElement, "BOTTOMLEFT", 0, yOffset)
@@ -107,16 +96,6 @@ function BB:InitSettings()
         local isChecked = self:GetChecked()
         local isGlobal = (settingsScope == "global")
         BB:SetSetting("enableAutoLure", isChecked, isGlobal)
-=======
-    -- Enable Auto Lure checkbox
-    local lureCheckbox = CreateFrame("CheckButton", "BobberBuddyLureCheckbox", self.optionsPanel, "InterfaceOptionsCheckButtonTemplate")
-    lureCheckbox:SetPoint("TOPLEFT", lastElement, "BOTTOMLEFT", 0, yOffset)
-    BobberBuddyLureCheckboxText:SetText("Automatically apply fishing lures")
-    lureCheckbox.tooltipText = "When enabled, BobberBuddy will automatically apply the best available lure to your fishing pole"
-    lureCheckbox:SetChecked(self.db.enableAutoLure)
-    lureCheckbox:SetScript("OnClick", function(self)
-        BB.db.enableAutoLure = self:GetChecked()
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     end)
     
     lastElement = lureCheckbox
@@ -126,17 +105,11 @@ function BB:InitSettings()
     bobberCheckbox:SetPoint("TOPLEFT", lastElement, "BOTTOMLEFT", 0, -8)
     BobberBuddyBobberCheckboxText:SetText("Automatically click fishing bobber")
     bobberCheckbox.tooltipText = "When enabled, BobberBuddy will automatically click the fishing bobber when it splashes"
-<<<<<<< HEAD
     bobberCheckbox:SetChecked(BB:GetSetting("enableAutoBobberClick"))
     bobberCheckbox:SetScript("OnClick", function(self)
         local isChecked = self:GetChecked()
         local isGlobal = (settingsScope == "global")
         BB:SetSetting("enableAutoBobberClick", isChecked, isGlobal)
-=======
-    bobberCheckbox:SetChecked(self.db.enableAutoBobberClick)
-    bobberCheckbox:SetScript("OnClick", function(self)
-        BB.db.enableAutoBobberClick = self:GetChecked()
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     end)
     
     lastElement = bobberCheckbox
@@ -146,17 +119,11 @@ function BB:InitSettings()
     trackerCheckbox:SetPoint("TOPLEFT", lastElement, "BOTTOMLEFT", 0, -8)
     BobberBuddyTrackerCheckboxText:SetText("Show Fish Tracker window")
     trackerCheckbox.tooltipText = "When enabled, the fish tracker window will be shown"
-<<<<<<< HEAD
     trackerCheckbox:SetChecked(BB:GetSetting("showTracker"))
     trackerCheckbox:SetScript("OnClick", function(self)
         local isChecked = self:GetChecked()
         local isGlobal = (settingsScope == "global")
         BB:SetSetting("showTracker", isChecked, isGlobal)
-=======
-    trackerCheckbox:SetChecked(self.db.showTracker)
-    trackerCheckbox:SetScript("OnClick", function(self)
-        BB.db.showTracker = self:GetChecked()
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
         BB:UpdateTrackerVisibility()
     end)
     
@@ -182,7 +149,6 @@ function BB:InitSettings()
     
     lastElement = resetButton
     
-<<<<<<< HEAD
     -- Create fishing stats section
     local statsTitle = self.optionsPanel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     statsTitle:SetPoint("TOPLEFT", lastElement, "BOTTOMLEFT", 0, -20)
@@ -220,21 +186,15 @@ function BB:InitSettings()
     
     lastElement = dataTitle
     
-=======
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     -- Clear Session button
     local clearSessionButton = CreateFrame("Button", "BobberBuddyClearSessionButton", self.optionsPanel, "UIPanelButtonTemplate")
     clearSessionButton:SetSize(150, 24)
     clearSessionButton:SetPoint("TOPLEFT", lastElement, "BOTTOMLEFT", 0, -8)
     clearSessionButton:SetText("Clear Session Tracking")
-<<<<<<< HEAD
     clearSessionButton:SetScript("OnClick", function() 
         BB:ClearSessionData()
         UpdateStatsText()
     end)
-=======
-    clearSessionButton:SetScript("OnClick", function() BB:ClearSessionFishCount() end)
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     
     lastElement = clearSessionButton
     
@@ -244,7 +204,6 @@ function BB:InitSettings()
     resetAllButton:SetPoint("TOPLEFT", lastElement, "BOTTOMLEFT", 0, -8)
     resetAllButton:SetText("Reset All Fish Data")
     resetAllButton:SetScript("OnClick", function()
-<<<<<<< HEAD
         if StaticPopup_Show then
             StaticPopup_Show("BOBBERBUDDY_CONFIRM_RESET")
         else
@@ -259,14 +218,10 @@ function BB:InitSettings()
     -- Update the stats whenever the panel is shown
     self.optionsPanel:SetScript("OnShow", function()
         UpdateStatsText()
-=======
-        StaticPopup_Show("BOBBERBUDDY_CONFIRM_RESET")
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     end)
     
     -- Set up open settings function
     function BB:OpenSettings()
-<<<<<<< HEAD
         -- Check if WoW interface function exists
         if InterfaceOptionsFrame_OpenToCategory then
             InterfaceOptionsFrame_OpenToCategory(self.optionsPanel)
@@ -275,10 +230,5 @@ function BB:InitSettings()
         else
             print("BobberBuddy: Settings panel cannot be opened outside of WoW")
         end
-=======
-        InterfaceOptionsFrame_OpenToCategory(self.optionsPanel)
-        -- Sometimes needs to be called twice to actually open the panel
-        InterfaceOptionsFrame_OpenToCategory(self.optionsPanel)
->>>>>>> b55af0803a5f5df259b8c0744c364f651ec9b88f
     end
 end
