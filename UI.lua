@@ -35,7 +35,14 @@ function BB:CreateTrackerFrame()
     
     -- Get saved position or use default
     local position = self:GetSetting("trackerPosition") or {"RIGHT", UIParent, "RIGHT", -50, 0}
-    frame:SetPoint(position[1], position[2], position[3], position[4], position[5])
+    local relativeTo = position[2]
+
+    -- Validate relativeTo
+    if type(relativeTo) ~= "table" or not relativeTo.GetName then
+        relativeTo = UIParent
+    end
+
+    frame:SetPoint(position[1], relativeTo, position[3], position[4], position[5])
     
     frame:SetFrameStrata("MEDIUM")
     frame:SetMovable(true)
