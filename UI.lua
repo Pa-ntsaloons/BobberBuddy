@@ -178,10 +178,15 @@ function BB:CreateTrackerFrame()
     local skillHover = CreateFrame("Frame", nil, frame)
     skillHover:SetPoint("TOPLEFT", skillLabel, "TOPLEFT", 0, 2)
     skillHover:SetPoint("BOTTOMRIGHT", nextUp, "BOTTOMRIGHT", 0, -2)
-    Tooltip(skillHover, "Fishing skill",
-        "Your base Fishing skill (lures and fishing gear add to it while active).\n\n" ..
-        "The next skill-up estimate is the average fishing time and casts your recent skill-ups took. " ..
-        "It appears after your second skill-up and gets better as you fish.")
+    skillHover:EnableMouse(true)
+    skillHover:SetScript("OnEnter", function(self) BB:ShowSkillTooltip(self) end)
+    skillHover:SetScript("OnLeave", GameTooltip_Hide)
+    skillHover:RegisterForDrag("LeftButton")
+    skillHover:SetScript("OnDragStart", function() frame:StartMoving() end)
+    skillHover:SetScript("OnDragStop", function()
+        frame:StopMovingOrSizing()
+        BB:SaveTrackerPosition()
+    end)
 
     -- Session stats grid
     local statsLabel = SectionLabel(frame, "Session")
@@ -263,7 +268,7 @@ function BB:CreateTrackerFrame()
         sinceTick = sinceTick + elapsed
         if sinceTick >= 1 then
             sinceTick = 0
-            if BB.cache.isFishing then BB:UpdateStatsLine() end
+            BB:UpdateStatsLine() -- keeps time and the skill bonus current while the window is open
         end
     end)
 
@@ -303,16 +308,34 @@ function BB:UpdateStatsLine()
     -- Fishing skill
     local skill = self.db.fishingSkill
     if skill.rank then
-        ui.skillValue:SetText(skill.max and (skill.rank .. " / " .. skill.max) or tostring(skill.rank))
+        -- "225 (+95) / 300", like the character window: base skill, then the bonus in green
+        -- The game's own bonus can leave out the pole, so add up pole, gear, lure and buffs
+        -- ourselves and use whichever is bigger
+        local _, _, liveBonus = self:ReadFishingSkill()
+        local _, counted = self:GetFishingSkillBreakdown()
+        local bonus = math.max(liveBonus or self.cache.skillBonus or 0, counted)
+        self.cache.skillBonus = bonus
+        local text = tostring(skill.rank)
+        if bonus > 0 then
+            text = text .. " |cFF20FF20(+" .. bonus .. ")|r"
+        elseif bonus < 0 then
+            text = text .. " |cFFFF2020(" .. bonus .. ")|r"
+        end
+        if skill.max then text = text .. " / " .. skill.max end
+        ui.skillValue:SetText(text)
         ui.skillBar:SetValue(skill.max and skill.max > 0 and (skill.rank / skill.max) or 1)
         if skill.max and skill.rank >= skill.max then
             ui.nextSkillText:SetText(skill.max >= 300 and "Max skill reached"
                 or "|cFFFFB040At your cap|r - train the next rank to keep going")
         else
-            local seconds, casts = self:EstimateNextSkillUp()
-            if seconds then
-                ui.nextSkillText:SetText(seconds < 1 and "Next skill-up: any cast now"
-                    or ("Next skill-up in ~" .. BB.FormatDuration(seconds) .. "  |cFFA0A0A0(~" .. casts .. " casts)|r"))
+            local catches, seconds = self:EstimateNextSkillUp()
+            if catches then
+                ui.nextSkillText:SetText(catches < 1 and "Next skill-up: any catch now"
+                    or ("Next skill-up in ~" .. catches .. (catches == 1 and " catch" or " catches")
+                        .. "  |cFFA0A0A0(~" .. BB.FormatDuration(seconds) .. ")|r"))
+            elseif seconds then
+                ui.nextSkillText:SetText(seconds < 1 and "Next skill-up: any catch now"
+                    or ("Next skill-up in |cFFA0A0A0~" .. BB.FormatDuration(seconds) .. "|r"))
             else
                 ui.nextSkillText:SetText("|cFFA0A0A0Next skill-up: estimating after a couple of skill-ups|r")
             end
@@ -322,6 +345,48 @@ function BB:UpdateStatsLine()
         ui.skillBar:SetValue(0)
         ui.nextSkillText:SetText("|cFFA0A0A0Cast once to read your skill|r")
     end
+end
+
+-- Hover on the skill bar: base skill, what each item, lure and buff adds, and the totals
+function BB:ShowSkillTooltip(owner)
+    local skill = self.db.fishingSkill
+    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("Fishing Skill")
+    if not skill.rank then
+        GameTooltip:AddLine("Cast once to read your skill.", 1, 1, 1, true)
+        GameTooltip:Show()
+        return
+    end
+
+    local list, counted = self:GetFishingSkillBreakdown()
+    local _, _, gameBonus = self:ReadFishingSkill()
+    local bonus = math.max(gameBonus or 0, counted)
+
+    GameTooltip:AddDoubleLine("Base skill", skill.max and (skill.rank .. " / " .. skill.max) or skill.rank,
+        1, 0.82, 0, 1, 1, 1)
+    if #list > 0 then
+        GameTooltip:AddLine(" ")
+        for _, entry in ipairs(list) do
+            local label = entry.icon and ("|T" .. entry.icon .. ":14:14:0:0|t " .. entry.name) or entry.name
+            local amount = entry.unknown and "|cFFA0A0A0?|r" or ("+" .. entry.amount)
+            GameTooltip:AddDoubleLine(label, amount, 1, 1, 1, 0.13, 1, 0.13)
+        end
+        if (gameBonus or 0) > counted then
+            GameTooltip:AddDoubleLine("Other", "+" .. (gameBonus - counted), 1, 1, 1, 0.13, 1, 0.13)
+        end
+    else
+        GameTooltip:AddLine("No pole, lure, gear or buff bonus right now.", 0.63, 0.63, 0.63, true)
+    end
+
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddDoubleLine("Total bonus", "+" .. bonus, 1, 0.82, 0, 0.13, 1, 0.13)
+    GameTooltip:AddDoubleLine("Effective skill", skill.rank + bonus, 1, 0.82, 0, 1, 1, 1)
+
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("The next skill-up estimate is the typical number of catches (and fishing time) " ..
+        "your recent skill-ups took. Only catches earn skill, not casts. It appears after your second " ..
+        "skill-up.", 0.63, 0.63, 0.63, true)
+    GameTooltip:Show()
 end
 
 -- One row in the session list: icon, name (quality colored), count; hover for the item tooltip

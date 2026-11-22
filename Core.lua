@@ -218,7 +218,18 @@ function BB:IsPendingLureSpell(spellID)
 end
 
 -- The lure finished applying: count it as on, and forget any earlier failed attempts
+-- Which lure item a spell belongs to (so lures you put on yourself are known too)
+function BB:GetLureForSpell(spellID)
+    if not spellID or C.IsSecret(spellID) then return nil end
+    for itemID in pairs(self.LURES) do
+        local _, itemSpellID = C.GetItemSpell(itemID)
+        if itemSpellID == spellID then return itemID end
+    end
+end
+
 function BB:OnLureCastSucceeded(spellID)
+    local lureID = (self:IsPendingLureSpell(spellID) and self.pendingLure.id) or self:GetLureForSpell(spellID)
+    if lureID and self.db then self.db.lastLureID = lureID end -- names the lure in the skill tooltip
     if not self:IsPendingLureSpell(spellID) then return end
     self.lureAppliedAt = GetTime()
     if self.lureMisses then self.lureMisses[self.pendingLure.id] = 0 end

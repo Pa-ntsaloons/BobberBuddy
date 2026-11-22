@@ -334,3 +334,139 @@ function BB:OnSpellFailed(spellID)
         self.pendingBuff = nil
     end
 end
+
+---------------------------------------------------------------------------
+-- Fishing skill breakdown: what each item, lure and buff adds right now
+---------------------------------------------------------------------------
+local function LinesFromData(data)
+    local lines = {}
+    for _, line in ipairs(data and data.lines or {}) do
+        if line.leftText and not C.IsSecret(line.leftText) then lines[#lines + 1] = line.leftText end
+    end
+    return lines
+end
+
+local function ScanLines(setter)
+    scanTip = scanTip or CreateFrame("GameTooltip", "BobberBuddyScanTip", nil, "GameTooltipTemplate")
+    scanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    scanTip:ClearLines()
+    setter(scanTip)
+    local lines = {}
+    for i = 1, scanTip:NumLines() do
+        local fs = _G["BobberBuddyScanTipTextLeft" .. i]
+        local text = fs and fs:GetText()
+        if text and not C.IsSecret(text) then lines[#lines + 1] = text end
+    end
+    scanTip:Hide()
+    return lines
+end
+
+-- The lure on your pole: its line on the pole's tooltip, e.g. "Fishing Lure (+100 Fishing Skill) (9 min)"
+local function GetLureBonus(fishing)
+    if not GetWeaponEnchantInfo() then return nil end
+    local lines
+    if C_TooltipInfo and C_TooltipInfo.GetInventoryItem then
+        lines = LinesFromData(C_TooltipInfo.GetInventoryItem("player", MAINHAND))
+    else
+        lines = ScanLines(function(tip) tip:SetInventoryItem("player", MAINHAND) end)
+    end
+    local equipPrefix = (ITEM_SPELL_TRIGGER_ONEQUIP or "Equip:"):lower()
+    for i = 2, #lines do
+        local lower = lines[i]:lower()
+        local pos = lower:find(fishing, 1, true)
+        if pos and not StartsWith(lower, equipPrefix) and not lower:match("^%+%d")
+            and (lower:find("lure", 1, true) or lower:find("%(")) then
+            local amount = FishingAmount(lower, pos)
+            if amount then
+                return (lines[i]:match("^(.-)%s*%(") or "Lure"), amount
+            end
+        end
+    end
+    return "Lure", nil -- a lure is on but its bonus couldn't be read
+end
+
+local function GetAuraLines(index, aura)
+    if C_TooltipInfo and C_TooltipInfo.GetUnitBuffByAuraInstanceID and aura.auraInstanceID then
+        return LinesFromData(C_TooltipInfo.GetUnitBuffByAuraInstanceID("player", aura.auraInstanceID))
+    end
+    return ScanLines(function(tip) tip:SetUnitBuff("player", index) end)
+end
+
+-- Which lure is on the pole: the one you last applied if its bonus matches, otherwise a lure
+-- in your bags with that bonus, otherwise any known lure with that bonus
+function BB:IdentifyLure(amount)
+    local last = self.db and self.db.lastLureID
+    if last and (not amount or self.LURES[last] == amount) then return last end
+    if not amount then return nil end
+    local found
+    self.ForEachBagItem(function(itemID)
+        if not found and self.LURES[itemID] == amount then found = itemID end
+    end)
+    if found then return found end
+    for itemID, bonus in pairs(self.LURES) do
+        if bonus == amount then return itemID end
+    end
+end
+
+-- Returns a list of { name, amount, icon, itemID } and their total
+function BB:GetFishingSkillBreakdown()
+    local list, total = {}, 0
+    local fishing = self:GetFishingSpellName():lower()
+    local function Add(name, amount, icon)
+        if amount and amount ~= 0 then
+            list[#list + 1] = { name = name, amount = amount, icon = icon }
+            total = total + amount
+        end
+    end
+
+    -- Worn gear and the pole
+    for slot = 1, 17 do
+        local itemID = GetInventoryItemID("player", slot)
+        if itemID then
+            local bonus = self:GetFishingInfo(itemID).equip
+            if bonus > 0 then
+                local name = C.GetItemInfo(itemID) or ("item " .. itemID)
+                Add(name, bonus, GetInventoryItemTexture("player", slot))
+                list[#list].itemID = itemID
+            end
+        end
+    end
+
+    -- Lure on the pole
+    if self:IsFishingPoleEquipped() then
+        local lureName, lureBonus = GetLureBonus(fishing)
+        if lureName then
+            local lureID = self:IdentifyLure(lureBonus)
+            local icon = lureID and select(5, C.GetItemInfoInstant(lureID)) or 136243 -- generic lure icon
+            if lureID then lureName = C.GetItemInfo(lureID) or lureName end
+            if lureBonus then
+                Add(lureName, lureBonus, icon)
+            else
+                list[#list + 1] = { name = lureName, unknown = true, icon = icon }
+            end
+            list[#list].itemID = lureID
+        end
+    end
+
+    -- Buffs (fishing food and drink, and anything else that mentions Fishing)
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        for i = 1, 40 do
+            local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+            if not aura then break end
+            if aura.name and not C.IsSecret(aura.name) then
+                local lines = GetAuraLines(i, aura)
+                for j = 2, #lines do
+                    local lower = lines[j]:lower()
+                    local pos = lower:find(fishing, 1, true)
+                    local amount = pos and FishingAmount(lower, pos)
+                    if amount then
+                        Add(aura.name, amount, aura.icon)
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    return list, total
+end

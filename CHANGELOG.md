@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.3 — 2026-11-22
+
+### Fishing skill
+- The skill bar shows your effective skill like the character window does: base skill, then your bonus in green (225 (+95) / 300).
+- The bonus counts your fishing pole, which the game's own number can leave out.
+- Hover the skill bar for a breakdown: your pole, each piece of fishing gear, the lure on your pole (by name) and any fishing buffs, with your total bonus and effective skill.
+- The next skill-up estimate counts catches instead of casts, since only catches earn skill, with fishing time shown beside it (~7 catches (~2m)). It shows time only until you've had two skill-ups with the new count.
+- The estimate uses your typical skill-up rather than the average, so one long dry spell no longer pushes it way up.
+
+### Fixes
+- Resetting all data also clears the saved skill-ups, so the estimate starts fresh instead of going wrong.
+
 ## 1.0.2 — 2026-11-22
 
 ### Fixes

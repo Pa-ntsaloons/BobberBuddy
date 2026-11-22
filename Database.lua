@@ -20,6 +20,7 @@ local defaultDB = {
     },
     stats = {
         fishingCasts = 0,
+        fishingCatches = 0, -- casts that brought something up (what earns skill)
         timeSpentFishing = 0,
         luresUsed = 0,
         totalPlayTime = 0,
@@ -166,9 +167,11 @@ function BB:ClearAllData()
     -- Casts, fishing time and lures used too
     local stats = self.db.stats
     stats.fishingCasts = 0
+    stats.fishingCatches = 0
     stats.timeSpentFishing = 0
     stats.luresUsed = 0
     wipe(stats.zoneTime)
+    wipe(self.db.fishingSkill.ups) -- they were measured against the time and casts just reset
     if self.cache.isFishing then
         self.cache.fishingStart = time() -- don't re-add the part of this cast before the reset
     end
@@ -209,6 +212,7 @@ end
 -- Stats
 function BB:TrackFishingCast()
     self.db.stats.fishingCasts = self.db.stats.fishingCasts + 1
+    self.cache.catchCounted = false
     self.cache.fishingStart = time()
     self.cache.isFishing = true
     self.cache.sessionFirstCast = self.cache.sessionFirstCast or time() -- gold/hour clock
@@ -222,6 +226,13 @@ function BB:GetTimeSpentFishing()
         total = total + (time() - self.cache.fishingStart)
     end
     return total
+end
+
+-- One catch per cast, however many items (or coins) it brought up
+function BB:CountCatch()
+    if self.cache.catchCounted then return end
+    self.cache.catchCounted = true
+    self.db.stats.fishingCatches = (self.db.stats.fishingCatches or 0) + 1
 end
 
 function BB:TrackLureUsage()

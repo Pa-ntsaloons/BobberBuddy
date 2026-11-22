@@ -47,6 +47,8 @@ function BB:InitFishTracker()
     frame:RegisterEvent("CHAT_MSG_LOOT")
     frame:RegisterEvent("CHAT_MSG_SKILL")
     frame:RegisterEvent("SKILL_LINES_CHANGED")
+    frame:RegisterUnitEvent("UNIT_INVENTORY_CHANGED", "player")
+    frame:RegisterUnitEvent("UNIT_AURA", "player")
     frame:RegisterEvent("PLAYER_ENTERING_WORLD")
     frame:RegisterEvent("CHAT_MSG_MONEY")
     frame:RegisterEvent("UI_ERROR_MESSAGE")
@@ -94,6 +96,15 @@ function BB:InitFishTracker()
             BB:OnSkillMessage(...)
         elseif event == "SKILL_LINES_CHANGED" or event == "PLAYER_ENTERING_WORLD" then
             BB:RefreshFishingSkill()
+        elseif event == "UNIT_INVENTORY_CHANGED" or event == "UNIT_AURA" then
+            -- Gear, lures and buff food change the bonus; re-read it shortly after (once per burst)
+            if not BB.skillRefreshPending then
+                BB.skillRefreshPending = true
+                C_Timer.After(0.5, function()
+                    BB.skillRefreshPending = false
+                    BB:RefreshFishingSkill()
+                end)
+            end
         elseif event == "CHAT_MSG_MONEY" then
             BB:OnMoneyMessage(...)
         elseif event == "UI_ERROR_MESSAGE" then
@@ -125,6 +136,7 @@ function BB:OnLootMessage(message)
         if item then
             local name = item:match("%[(.-)%]") or item
             local itemID = tonumber(item:match("|Hitem:(%d+)"))
+            self:CountCatch()
             self:AddFishToDatabase(name, tonumber(quantity) or 1, self.cache.lastZone or GetRealZoneText() or "Unknown", itemID)
             return
         end
@@ -147,7 +159,10 @@ function BB:OnMoneyMessage(message)
         local amount = message:match(entry[1])
         if amount then copper = copper + tonumber(amount) * entry[2] end
     end
-    if copper > 0 then self:AddFishingMoney(copper) end
+    if copper > 0 then
+        self:CountCatch()
+        self:AddFishingMoney(copper)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -206,22 +221,30 @@ end
 -- Fishing skill: current level and an estimate of the time to the next one
 ---------------------------------------------------------------------------
 local SKILL_UP_PATTERN = ToPattern(SKILL_RANK_UP) or "^Your skill in (.+) has increased to (%d+)%.$"
-local MAX_SKILL_UPS_KEPT = 6
+local MAX_SKILL_UPS_KEPT = 8
 
--- Read Fishing rank and max from the game (modern profession API, then classic skill lines)
+local function CleanBonus(bonus)
+    if type(bonus) ~= "number" or BB.compat.IsSecret(bonus) then return 0 end
+    return bonus
+end
+
+-- Read Fishing rank, max and the current bonus from pole, lure, gear and buffs
+-- (modern profession API, then classic skill lines)
 function BB:ReadFishingSkill()
     if GetProfessions and GetProfessionInfo then
         local ok, _, _, _, fishing = pcall(GetProfessions)
         if ok and fishing then
-            local ok2, _, _, rank, maxRank = pcall(GetProfessionInfo, fishing)
-            if ok2 and type(rank) == "number" and not BB.compat.IsSecret(rank) then return rank, maxRank end
+            local ok2, _, _, rank, maxRank, _, _, _, bonus = pcall(GetProfessionInfo, fishing)
+            if ok2 and type(rank) == "number" and not BB.compat.IsSecret(rank) then
+                return rank, maxRank, CleanBonus(bonus)
+            end
         end
     end
     if GetNumSkillLines and GetSkillLineInfo then
         local fishingName = self:GetFishingSpellName()
         for i = 1, GetNumSkillLines() do
-            local name, isHeader, _, rank, _, _, maxRank = GetSkillLineInfo(i)
-            if not isHeader and name == fishingName then return rank, maxRank end
+            local name, isHeader, _, rank, _, bonus, maxRank = GetSkillLineInfo(i)
+            if not isHeader and name == fishingName then return rank, maxRank, CleanBonus(bonus) end
         end
     end
 end
@@ -231,7 +254,7 @@ function BB:RecordFishingSkill(rank, maxRank)
     if not self.db or not rank then return end
     local skill = self.db.fishingSkill
     if skill.rank and rank > skill.rank then
-        table.insert(skill.ups, { time = self:GetTimeSpentFishing(), casts = self.db.stats.fishingCasts or 0 })
+        table.insert(skill.ups, { time = self:GetTimeSpentFishing(), catches = self.db.stats.fishingCatches or 0 })
         while #skill.ups > MAX_SKILL_UPS_KEPT do table.remove(skill.ups, 1) end
     end
     skill.rank = rank
@@ -240,8 +263,11 @@ function BB:RecordFishingSkill(rank, maxRank)
 end
 
 function BB:RefreshFishingSkill()
-    local rank, maxRank = self:ReadFishingSkill()
-    if rank then self:RecordFishingSkill(rank, maxRank) end
+    local rank, maxRank, bonus = self:ReadFishingSkill()
+    if rank then
+        self.cache.skillBonus = bonus -- changes with gear, lures and buffs, so it isn't saved
+        self:RecordFishingSkill(rank, maxRank)
+    end
 end
 
 -- "Your skill in Fishing has increased to 89." (works even if the skill APIs don't)
@@ -253,18 +279,38 @@ function BB:OnSkillMessage(message)
     end
 end
 
--- Estimate the next skill-up from the average fishing time (and casts) your recent ones took.
--- Returns secondsLeft, castsLeft - or nil until there are at least two skill-ups to compare.
+local function Median(values)
+    table.sort(values)
+    local n = #values
+    if n % 2 == 1 then return values[(n + 1) / 2] end
+    return (values[n / 2] + values[n / 2 + 1]) / 2
+end
+
+-- Estimate the next skill-up from the typical (median) number of catches and fishing time your
+-- recent ones took. Only catches earn skill, so catches are the main number. The median ignores
+-- the odd slow stretch, which an average would let push the estimate way up.
+-- Returns catchesLeft, secondsLeft (catchesLeft is nil for skill-ups saved before catches were
+-- counted), or nil until there are at least two skill-ups to compare.
 function BB:EstimateNextSkillUp()
     local ups = self.db.fishingSkill.ups
-    if #ups < 2 then return nil end
-    local first, last = ups[1], ups[#ups]
-    local intervals = #ups - 1
-    local avgTime = (last.time - first.time) / intervals
-    local avgCasts = (last.casts - first.casts) / intervals
-    local sinceTime = self:GetTimeSpentFishing() - last.time
-    local sinceCasts = (self.db.stats.fishingCasts or 0) - last.casts
-    return math.max(avgTime - sinceTime, 0), math.max(math.ceil(avgCasts - sinceCasts), 0)
+    local times, catches = {}, {}
+    for i = 2, #ups do
+        local t = ups[i].time - ups[i - 1].time
+        if t >= 0 then times[#times + 1] = t end -- skip gaps that span a data reset
+        if ups[i].catches and ups[i - 1].catches then
+            local c = ups[i].catches - ups[i - 1].catches
+            if c >= 0 then catches[#catches + 1] = c end
+        end
+    end
+    if #times == 0 then return nil end
+    local last = ups[#ups]
+    local seconds = math.max(Median(times) - math.max(self:GetTimeSpentFishing() - last.time, 0), 0)
+    local catchesLeft
+    if #catches > 0 then
+        local since = math.max((self.db.stats.fishingCatches or 0) - (last.catches or 0), 0)
+        catchesLeft = math.max(math.ceil(Median(catches) - since), 0)
+    end
+    return catchesLeft, seconds
 end
 
 -- Shorter money for tight spaces: drop copper once there's gold ("19g 30s"), else silver + copper

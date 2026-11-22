@@ -2,7 +2,7 @@
 ## Title: Bobber Buddy
 ## Notes: One-key fishing: wears your fishing gear, eats fishing food, applies your best lure, casts and reels in, and logs every catch.
 ## Author: Pa_nts
-## Version: 1.0.2
+## Version: 1.0.3
 ## SavedVariables: BobberBuddyDB
 ## OptionalDeps: Auctionator
 ## Category: Professions
