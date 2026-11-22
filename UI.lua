@@ -194,14 +194,14 @@ function BB:CreateTrackerFrame()
         casts = StatCell(frame, "Casts:", cellWidth),
         time = StatCell(frame, "Time:", cellWidth),
         value = StatCell(frame, "Value:", cellWidth),
-        perHour = StatCell(frame, "Per hour:", cellWidth),
+        perHour = StatCell(frame, "|TInterface\\MoneyFrame\\UI-GoldIcon:0|t/hr:", cellWidth),
     }
     local order = { { "catches", "total" }, { "casts", "time" }, { "value", "perHour" } }
     local previous = statsLabel
-    for i, pair in ipairs(order) do
-        local left, right = cells[pair[1]], cells[pair[2]]
+    for i, row in ipairs(order) do
+        local left, right = cells[row[1]], row[2] and cells[row[2]]
         left:SetPoint("TOPLEFT", previous, "BOTTOMLEFT", 0, i == 1 and -6 or -3)
-        right:SetPoint("LEFT", left, "RIGHT", 16, 0)
+        if right then right:SetPoint("LEFT", left, "RIGHT", 16, 0) end
         previous = left
     end
     ui.cells = cells
@@ -267,7 +267,8 @@ function BB:CreateTrackerFrame()
         end
     end)
 
-    table.insert(UISpecialFrames, "BobberBuddyTrackerFrame") -- Escape closes it
+    -- Not added to UISpecialFrames: Escape (and the game closing its settings window) closes every
+    -- window on that list at once, which took the tracker down with the options. Use its close button.
 
     StaticPopupDialogs["BOBBERBUDDY_CONFIRM_RESET"] = {
         text = "Reset all Bobber Buddy data?\nThis clears every catch, your cast count, fishing time and lures used.\nThis cannot be undone!",
@@ -295,9 +296,9 @@ function BB:UpdateStatsLine()
     cells.total.value:SetText(self:GetLifetimeTotal())
     cells.casts.value:SetText(self.db.stats.fishingCasts or 0)
     cells.time.value:SetText(BB.FormatDuration(self:GetTimeSpentFishing()))
-    cells.value.value:SetText(BB.FormatMoney(self:GetSessionValue()))
+    cells.value.value:SetText(BB.FormatMoneyShort(self:GetSessionValue()))
     local perHour = self:GetGoldPerHour()
-    cells.perHour.value:SetText(perHour and BB.FormatMoney(perHour) or "|cFF808080--|r")
+    cells.perHour.value:SetText(perHour and BB.FormatMoneyShort(perHour) or "|cFF808080--|r")
 
     -- Fishing skill
     local skill = self.db.fishingSkill

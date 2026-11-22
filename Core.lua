@@ -196,11 +196,33 @@ BB.ForEachBagItem = ForEachBagItem
 
 -- Lures in Classic-style fishing are temporary main-hand enchants
 -- A lure with under 10 seconds left counts as gone, so a fresh one goes on before the cast
+-- Right after a lure finishes applying, the pole can take a moment to show it. Trust the
+-- finished application for this long, so a quick press doesn't put on a second lure.
+local LURE_SETTLE = 15
+
 function BB:HasActiveLure()
+    if self.lureAppliedAt and GetTime() - self.lureAppliedAt < LURE_SETTLE then return true end
     local hasMainHandEnchant, expirationMS = GetWeaponEnchantInfo()
     if not hasMainHandEnchant then return false end
     if expirationMS and not C.IsSecret(expirationMS) and expirationMS < 10000 then return false end
     return true
+end
+
+-- Is this cast the lure we just tried to apply? (match the spell, or its name as a fallback)
+function BB:IsPendingLureSpell(spellID)
+    local pending = self.pendingLure
+    if not pending or not spellID or C.IsSecret(spellID) then return false end
+    if pending.spellID and spellID == pending.spellID then return true end
+    local name = pending.spellName and C.GetSpellName(spellID)
+    return name ~= nil and not C.IsSecret(name) and name == pending.spellName
+end
+
+-- The lure finished applying: count it as on, and forget any earlier failed attempts
+function BB:OnLureCastSucceeded(spellID)
+    if not self:IsPendingLureSpell(spellID) then return end
+    self.lureAppliedAt = GetTime()
+    if self.lureMisses then self.lureMisses[self.pendingLure.id] = 0 end
+    self.pendingLure = nil
 end
 
 -- Lures that failed to go on twice in a row rest for 2 minutes (not the whole session)
@@ -226,8 +248,8 @@ end
 
 -- Lure application stopped: interrupted (moved, jumped) isn't the lure's fault - just retry
 function BB:OnLureCastStopped(spellID, interrupted)
+    if not self:IsPendingLureSpell(spellID) then return end
     local pending = self.pendingLure
-    if not pending or not pending.spellID or spellID ~= pending.spellID then return end
     self.pendingLure = nil
     if not interrupted then self:CountLureMiss(pending.id) end
 end
@@ -404,8 +426,8 @@ function BB:PrepareButton(button, down)
 
             local lure = self:FindBestLure()
             if lure then
-                local _, lureSpellID = C.GetItemSpell(lure)
-                self.pendingLure = { id = lure, time = GetTime(), spellID = lureSpellID }
+                local lureSpellName, lureSpellID = C.GetItemSpell(lure)
+                self.pendingLure = { id = lure, time = GetTime(), spellID = lureSpellID, spellName = lureSpellName }
                 self:NoteItemAttempt(lure)
                 SetMacro(button, "/use item:" .. lure .. "\n/use " .. (INVSLOT_MAINHAND or 16))
                 self:TrackLureUsage()

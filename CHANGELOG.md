@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.2 — 2026-11-22
+
+### Fixes
+- Pressing the fishing key right after a lure finishes applying no longer puts a second lure on.
+- Closing the options window (or pressing Escape) no longer closes the tracker too. Close the tracker with its close button, the minimap button or `/bb toggle`.
+- The gold-per-hour amount no longer overlaps its label on the tracker.
+
+### Tracker
+- Gold per hour is labelled with a gold coin icon ("/hr") and sits beside Value.
+- Value and gold per hour drop copper once you're into gold (19g 30s instead of 19g 30s 40c), so they fit neatly.
+
 ## 1.0.1 — 2026-11-22
 
 ### Fishing skill

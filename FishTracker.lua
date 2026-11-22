@@ -40,6 +40,7 @@ function BB:InitFishTracker()
     frame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "player")
     frame:RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "player")
     frame:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "player")
+    frame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
     frame:RegisterEvent("PLAYER_REGEN_DISABLED")
     frame:RegisterEvent("LOOT_OPENED")
     frame:RegisterEvent("LOOT_CLOSED")
@@ -73,6 +74,9 @@ function BB:InitFishTracker()
                 BB:EndReelMode()
                 BB:ScheduleSoundRestore()
             end
+        elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+            local _, _, spellID = ...
+            BB:OnLureCastSucceeded(spellID)
         elseif event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_INTERRUPTED" then
             local _, _, spellID = ...
             BB:OnSpellFailed(spellID)
@@ -261,4 +265,13 @@ function BB:EstimateNextSkillUp()
     local sinceTime = self:GetTimeSpentFishing() - last.time
     local sinceCasts = (self.db.stats.fishingCasts or 0) - last.casts
     return math.max(avgTime - sinceTime, 0), math.max(math.ceil(avgCasts - sinceCasts), 0)
+end
+
+-- Shorter money for tight spaces: drop copper once there's gold ("19g 30s"), else silver + copper
+function BB.FormatMoneyShort(copper)
+    copper = math.floor(copper or 0)
+    if copper >= 10000 then
+        copper = copper - (copper % 100)
+    end
+    return BB.FormatMoney(copper)
 end
