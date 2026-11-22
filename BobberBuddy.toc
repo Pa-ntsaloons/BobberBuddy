@@ -1,16 +1,20 @@
-## Interface: 100200
-## Title: BobberBuddy
-## Notes: Enhances fishing by automating pole/lure management, casting, and bobber interaction with a single hotkey
+## Interface: 16001, 120105, 120107
+## Title: Bobber Buddy
+## Notes: One-key fishing: wears your fishing gear, eats fishing food, applies your best lure, casts and reels in, and logs every catch.
 ## Author: Pa_nts
-## Version: 1.0
+## Version: 1.0.0
 ## SavedVariables: BobberBuddyDB
-## OptionalDeps: Ace3
-## X-Embeds: Ace3
+## OptionalDeps: Auctionator
+## Category: Professions
+## IconTexture: Interface\Icons\Trade_Fishing
 
-Bindings.xml
-UI.xml
 Core.lua
 Database.lua
+FishingGear.lua
+SoundLists.lua
+FishingSound.lua
 FishTracker.lua
 UI.lua
+MinimapButton.lua
+FishingLog.lua
 Settings.lua

@@ -1,220 +1,185 @@
 --[[
     BobberBuddy - Fish Tracker Module
-    Tracks fish caught during the session
+    Watches the Fishing channel and records what you loot from it.
+
+    Catches are read from your own "You receive loot: ..." chat messages that
+    arrive right after a Fishing cast ends (or while a loot window opened from
+    fishing is still open). This works with or without auto-loot, which the
+    loot-window API did not on WoW Forever.
 ]]
 
--- Check if addon is loaded and create local reference
 BobberBuddy = BobberBuddy or {}
 local BB = BobberBuddy
 
--- Initialize session tracking
-BB.sessionFishCaught = {}
+local LOOT_GRACE = 8 -- seconds after the cast ends that loot still counts as fishing loot
 
--- Initialize fish tracking system
-function BB:InitFishTracker()
-    -- Set up additional loot event handling
-    local frame = CreateFrame("Frame")
-    frame:RegisterEvent("CHAT_MSG_LOOT")
-    frame:SetScript("OnEvent", function(self, event, ...)
-        if event == "CHAT_MSG_LOOT" then
-            BB:ProcessLootMessage(...)
-        end
-    end)
-    
-    -- Also register for fishing events
-    frame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
-    frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
-    frame:RegisterEvent("UNIT_SPELLCAST_FAILED")
-    frame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
-    frame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
-    
-    frame:HookScript("OnEvent", function(self, event, unit, _, spellID)
-        if unit ~= "player" then return end
-        
-        local fishingID = BB.isRetail and FISHING_SPELL_ID or FISHING_SPELL_ID_CLASSIC
-        
-        if event == "UNIT_SPELLCAST_CHANNEL_START" and spellID == fishingID then
-            -- Started fishing
-            BB:TrackFishingCast()
-        elseif event == "UNIT_SPELLCAST_SUCCEEDED" and spellID == fishingID then
-            -- Successful cast
-        elseif (event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_INTERRUPTED") and spellID == fishingID then
-            -- Failed cast
-            BB:TrackFishingEnd(false)
-        elseif event == "UNIT_SPELLCAST_CHANNEL_STOP" and spellID == fishingID then
-            -- Stopped fishing
-            -- Note: This will also fire when fish is caught, but we'll handle that in loot events
-        end
-    end)
+-- Turn a Blizzard format string like "You receive loot: %sx%d." into a Lua pattern
+local function ToPattern(format)
+    if not format then return end
+    local pattern = format:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+    pattern = pattern:gsub("%%%%s", "(.+)")
+    pattern = pattern:gsub("%%%%d", "(%%d+)")
+    return "^" .. pattern .. "$"
 end
 
--- Process loot message from chat
-function BB:ProcessLootMessage(message)
-    -- Format: "You receive loot: [Fish Name]"
-    if message and message:match("You receive loot: ") then
-        local itemLink = message:match("|c.-|r")
-        if itemLink then
-            local itemName = GetItemInfo(itemLink)
-            if itemName then
-                local quantity = 1
-                if message:match("x(%d+)") then
-                    quantity = tonumber(message:match("x(%d+)"))
-                end
-                
-                -- Check if this is a fish
-                local _, _, _, _, _, itemType, itemSubType = GetItemInfo(itemLink)
-                
-                -- In Retail, fish are typically categorized as Consumable -> Meat or Consumable -> Fish
-                if (itemType == "Consumable" and (itemSubType == "Meat" or itemSubType == "Fish" or itemSubType == "Food & Drink")) or
-                   -- In Classic/TBC, fish might be categorized differently, so we also check the name
-                   (BB.isClassic and (string.find(itemName:lower(), "fish") or 
-                                     string.find(itemName:lower(), "eel") or 
-                                     string.find(itemName:lower(), "crab") or
-                                     string.find(itemName:lower(), "mackeral") or
-                                     string.find(itemName:lower(), "herring"))) then
-                    -- Add to database with zone tracking
-                    local currentZone = self.cache.lastZone or GetRealZoneText() or "Unknown"
-                    self:AddFishToDatabase(itemName, quantity, currentZone)
-                    
-                    -- Mark fishing as ended successfully
-                    if self.cache.isFishing then
-                        self:TrackFishingEnd(true)
-                    end
-                    
-                    -- Print message to chat to confirm catch
-                    print("|cFF80FF80BobberBuddy|r: Caught " .. quantity .. "x " .. itemName .. " in " .. currentZone)
-                end
+-- Only "You receive loot:" counts. "You receive item:" (LOOT_ITEM_PUSHED_SELF) is what
+-- buying from a vendor, quest rewards and mail produce, so those are never catches.
+-- Multiple-quantity pattern first, so "x3" isn't swallowed into the item name.
+local LOOT_PATTERNS = {}
+for _, format in ipairs({ LOOT_ITEM_SELF_MULTIPLE, LOOT_ITEM_SELF }) do
+    local pattern = ToPattern(format)
+    if pattern then LOOT_PATTERNS[#LOOT_PATTERNS + 1] = pattern end
+end
+if #LOOT_PATTERNS == 0 then -- English fallback
+    LOOT_PATTERNS = { "^You receive loot: (.+)x(%d+)%.$", "^You receive loot: (.+)%.$" }
+end
+
+function BB:InitFishTracker()
+    local frame = CreateFrame("Frame")
+    frame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player")
+    frame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "player")
+    frame:RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "player")
+    frame:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "player")
+    frame:RegisterEvent("PLAYER_REGEN_DISABLED")
+    frame:RegisterEvent("LOOT_OPENED")
+    frame:RegisterEvent("LOOT_CLOSED")
+    frame:RegisterEvent("CHAT_MSG_LOOT")
+    frame:RegisterEvent("CHAT_MSG_MONEY")
+    frame:RegisterEvent("UI_ERROR_MESSAGE")
+    frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+
+    frame:SetScript("OnEvent", function(_, event, ...)
+        if event == "UNIT_SPELLCAST_CHANNEL_START" then
+            local _, _, spellID = ...
+            if BB:IsFishingSpell(spellID) then
+                BB:TrackFishingCast()
+                BB:StartReelMode()
+                BB:StartFishingSound()
+            end
+        elseif event == "UNIT_SPELLCAST_CHANNEL_STOP" then
+            local _, _, spellID = ...
+            if BB:IsFishingSpell(spellID) then
+                BB.lastFishingStop = GetTime()
+                BB:TrackFishingEnd()
+                BB:EndReelMode()
+                BB:ScheduleSoundRestore()
+            end
+        elseif event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_INTERRUPTED" then
+            local _, _, spellID = ...
+            BB:OnSpellFailed(spellID)
+        elseif event == "PLAYER_REGEN_DISABLED" then
+            BB:RestoreSound() -- you'll want to hear the fight
+        elseif event == "LOOT_OPENED" then
+            -- A loot window you leave open (no auto-loot) can be picked from later
+            BB.fishingLootOpen = BB:IsRecentFishing()
+        elseif event == "LOOT_CLOSED" then
+            BB.fishingLootOpen = false
+        elseif event == "CHAT_MSG_LOOT" then
+            BB:OnLootMessage(...)
+        elseif event == "CHAT_MSG_MONEY" then
+            BB:OnMoneyMessage(...)
+        elseif event == "UI_ERROR_MESSAGE" then
+            local _, message = ...
+            BB:OnUIError(message)
+        elseif event == "GET_ITEM_INFO_RECEIVED" then
+            -- Item names/prices arrive from the server a moment later; redraw once
+            if not BB.itemRefreshPending then
+                BB.itemRefreshPending = true
+                C_Timer.After(0.3, function()
+                    BB.itemRefreshPending = false
+                    BB:UpdateFishTrackerUI()
+                end)
             end
         end
+    end)
+end
+
+function BB:IsRecentFishing()
+    return GetTime() - (self.lastFishingStop or 0) < LOOT_GRACE
+end
+
+function BB:OnLootMessage(message)
+    if not message or BB.compat.IsSecret(message) then return end
+    if not (self.fishingLootOpen or self:IsRecentFishing()) then return end
+
+    for _, pattern in ipairs(LOOT_PATTERNS) do
+        local item, quantity = message:match(pattern)
+        if item then
+            local name = item:match("%[(.-)%]") or item
+            local itemID = tonumber(item:match("|Hitem:(%d+)"))
+            self:AddFishToDatabase(name, tonumber(quantity) or 1, self.cache.lastZone or GetRealZoneText() or "Unknown", itemID)
+            return
+        end
     end
 end
 
--- Add caught fish to tracking
-function BB:AddFishCaught(fishName, quantity)
-    quantity = quantity or 1
-    
-    -- Add to session tracking
-    if not self.sessionFishCaught[fishName] then
-        self.sessionFishCaught[fishName] = 0
+-- "You loot 1 Gold, 5 Silver, 3 Copper" while fishing (treasure, pools of coins)
+local MONEY_PATTERNS = {}
+for _, entry in ipairs({ { GOLD_AMOUNT, 10000 }, { SILVER_AMOUNT, 100 }, { COPPER_AMOUNT, 1 } }) do
+    if entry[1] then
+        MONEY_PATTERNS[#MONEY_PATTERNS + 1] = { entry[1]:gsub("%%d", "(%%d+)"), entry[2] }
     end
-    self.sessionFishCaught[fishName] = self.sessionFishCaught[fishName] + quantity
-    
-    -- Add to persistent tracking
-    if not self.db.fishCaught[fishName] then
-        self.db.fishCaught[fishName] = 0
-    end
-    self.db.fishCaught[fishName] = self.db.fishCaught[fishName] + quantity
-    
-    -- Get current zone
-    local zone = GetRealZoneText() or "Unknown"
-    
-    -- Store zone information if not already stored
-    if not self.db.fishZones then
-        self.db.fishZones = {}
-    end
-    
-    if not self.db.fishZones[fishName] then
-        self.db.fishZones[fishName] = {}
-    end
-    
-    if not self.db.fishZones[fishName][zone] then
-        self.db.fishZones[fishName][zone] = 0
-    end
-    
-    self.db.fishZones[fishName][zone] = self.db.fishZones[fishName][zone] + quantity
-    
-    -- Update the UI
-    self:UpdateFishTrackerUI()
-    
-    -- Print message to chat to confirm catch
-    print("|cFF80FF80BobberBuddy|r: Caught " .. quantity .. "x " .. fishName .. " in " .. zone)
 end
 
--- Get total fish caught in current session
-function BB:GetSessionTotalFishCount()
-    local total = 0
-    
-    -- Ensure sessionFishCaught exists
-    if not self.sessionFishCaught then
-        self.sessionFishCaught = {}
-        return 0
+function BB:OnMoneyMessage(message)
+    if not message or BB.compat.IsSecret(message) then return end
+    if not (self.fishingLootOpen or self:IsRecentFishing()) then return end
+    local copper = 0
+    for _, entry in ipairs(MONEY_PATTERNS) do
+        local amount = message:match(entry[1])
+        if amount then copper = copper + tonumber(amount) * entry[2] end
     end
-    
-    for _, count in pairs(self.sessionFishCaught) do
-        total = total + count
+    if copper > 0 then self:AddFishingMoney(copper) end
+end
+
+---------------------------------------------------------------------------
+-- Value and gold per hour
+---------------------------------------------------------------------------
+function BB:GetFishItemID(name)
+    local ids = self.db.fishData.itemIDs
+    if not ids[name] then
+        ids[name] = BB.compat.GetItemInfoInstant(name) -- works for items the game already knows
+    end
+    return ids[name]
+end
+
+-- Price of one item in copper: Auctionator's auction price when it has one, else vendor price
+function BB:GetItemValue(itemID)
+    if not itemID then return 0 end
+    local api = Auctionator and Auctionator.API and Auctionator.API.v1
+    if api and api.GetAuctionPriceByItemID then
+        local ok, price = pcall(api.GetAuctionPriceByItemID, "BobberBuddy", itemID)
+        if ok and type(price) == "number" and price > 0 then
+            return price, "auction"
+        end
+    end
+    local sellPrice = select(11, BB.compat.GetItemInfo(itemID))
+    return sellPrice or 0, "vendor"
+end
+
+function BB:GetSessionValue()
+    local total = self.cache.sessionMoney or 0
+    for name, count in pairs(self.cache.fishCaught) do
+        total = total + self:GetItemValue(self:GetFishItemID(name)) * count
     end
     return total
 end
 
--- Get total fish caught all-time
-function BB:GetTotalFishCount()
-    local total = 0
-    
-    -- Ensure db and fishCaught exist
-    if not self.db or not self.db.fishCaught then
-        return 0
-    end
-    
-    for _, count in pairs(self.db.fishCaught) do
-        total = total + count
-    end
-    return total
+-- Copper per hour since your first cast this session (nil for the first minute)
+function BB:GetGoldPerHour()
+    local start = self.cache.sessionFirstCast
+    if not start then return nil end
+    local elapsed = time() - start
+    if elapsed < 60 then return nil end
+    return math.floor(self:GetSessionValue() * 3600 / elapsed)
 end
 
--- Clear session fish count
-function BB:ClearSessionFishCount()
-    -- Ensure sessionFishCaught exists
-    self.sessionFishCaught = {}
-    
-    -- Check if UI system is available
-    if self.UpdateFishTrackerUI then
-        self:UpdateFishTrackerUI()
+function BB.FormatMoney(copper)
+    copper = math.floor(copper or 0)
+    if C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString then
+        return C_CurrencyInfo.GetCoinTextureString(copper)
+    elseif GetCoinTextureString then
+        return GetCoinTextureString(copper)
     end
-end
-
--- Clear all fish count
-function BB:ClearAllFishCount()
-    -- Ensure db exists
-    if not self.db then
-        return
-    end
-    
-    -- Ensure self.sessionFishCaught exists
-    if not self.sessionFishCaught then
-        self.sessionFishCaught = {}
-    else
-        self.sessionFishCaught = {}
-    end
-    
-    -- Clear database components safely
-    if self.db.fishCaught then
-        self.db.fishCaught = {}
-    end
-    
-    if self.db.fishZones then
-        self.db.fishZones = {}
-    end
-    
-    self:UpdateFishTrackerUI()
-end
-
--- Get fish data for display
-function BB:GetFishDisplayData()
-    local fishData = {}
-    
-    -- Ensure sessionFishCaught exists
-    if not self.sessionFishCaught then
-        self.sessionFishCaught = {}
-        return fishData
-    end
-    
-    -- Convert hash table to sortable array
-    for fish, count in pairs(self.sessionFishCaught) do
-        table.insert(fishData, {name = fish, count = count})
-    end
-    
-    -- Sort by count (descending)
-    table.sort(fishData, function(a, b) return a.count > b.count end)
-    
-    return fishData
+    return string.format("%dg %ds %dc", math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100)
 end

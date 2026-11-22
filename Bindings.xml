@@ -1,5 +1,7 @@
 <Bindings>
-    <Binding name="Fish" category="Bobber Buddy">
-        BobberBuddy_SetupHotKey()
+    <!-- category = our own section in Key Bindings, titled by BINDING_HEADER_BOBBERBUDDY ("Bobber Buddy") -->
+    <Binding name="CLICK BobberBuddyFishingButton:LeftButton" category="BINDING_HEADER_BOBBERBUDDY"/>
+    <Binding name="BOBBERBUDDY_RESTORE" category="BINDING_HEADER_BOBBERBUDDY">
+        BobberBuddy:RestoreGear()
     </Binding>
 </Bindings>

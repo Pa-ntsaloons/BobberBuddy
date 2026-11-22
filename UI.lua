@@ -14,7 +14,7 @@ function BB:InitUI()
     
     -- Check if we're in WoW environment
     if not CreateFrame then
-        print("BobberBuddy: Not running in WoW environment, skipping UI initialization")
+        print("Bobber Buddy: Not running in WoW environment, skipping UI initialization")
         return
     end
     
@@ -31,30 +31,31 @@ function BB:CreateTrackerFrame()
     self.ui.trackerFrame = frame
     
     -- Set frame properties
-    frame:SetSize(240, 280) -- Larger to accommodate more info
+    frame:SetSize(240, 300) -- Larger to accommodate more info
     
-    -- Get saved position or use default
-    local position = self:GetSetting("trackerPosition") or {"RIGHT", UIParent, "RIGHT", -50, 0}
-    local relativeTo = position[2]
-
-    -- Validate relativeTo
-    if type(relativeTo) ~= "table" or not relativeTo.GetName then
-        relativeTo = UIParent
+    -- Saved position is {point, relativePoint, x, y}, always relative to UIParent
+    local position = self:GetSetting("trackerPosition")
+    if type(position) == "table" and #position == 4 then
+        frame:SetPoint(position[1], UIParent, position[2], position[3], position[4])
+    else
+        frame:SetPoint("RIGHT", UIParent, "RIGHT", -50, 0)
     end
 
-    frame:SetPoint(position[1], relativeTo, position[3], position[4], position[5])
-    
     frame:SetFrameStrata("MEDIUM")
     frame:SetMovable(true)
+    frame:SetClampedToScreen(true)
     frame:EnableMouse(true)
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", frame.StartMoving)
-    frame:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        
-        -- Save position
-        local point, relativeTo, relativePoint, xOfs, yOfs = self:GetPoint()
-        BB:SetSetting("trackerPosition", {point, relativeTo, relativePoint, xOfs, yOfs})
+    frame:SetScript("OnDragStop", function(f)
+        f:StopMovingOrSizing()
+        BB:SaveTrackerPosition()
+    end)
+    frame:SetScript("OnHide", function()
+        -- Closing with Escape or the X button should stay closed (but not Alt+Z hiding the UI)
+        if UIParent:IsShown() and BB:GetSetting("showTracker") then
+            BB:SetSetting("showTracker", false)
+        end
     end)
     
     -- Set backdrop
@@ -70,7 +71,7 @@ function BB:CreateTrackerFrame()
     -- Create title text
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", frame, "TOPLEFT", 15, -15)
-    title:SetText("BobberBuddy")
+    title:SetText("Bobber Buddy")
     self.ui.title = title
     
     -- Create zone text
@@ -96,10 +97,38 @@ function BB:CreateTrackerFrame()
     statsText:SetPoint("TOPLEFT", totalText, "BOTTOMLEFT", 0, -5)
     statsText:SetText("Casts: 0  |  Time: 0:00")
     self.ui.statsText = statsText
+
+    -- Session value and gold per hour (hover for how it's worked out)
+    local valueText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    valueText:SetPoint("TOPLEFT", statsText, "BOTTOMLEFT", 0, -5)
+    self.ui.valueText = valueText
+
+    local valueHover = CreateFrame("Frame", nil, frame)
+    valueHover:SetAllPoints(valueText)
+    valueHover:SetScript("OnEnter", function(hover)
+        GameTooltip:SetOwner(hover, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Session value")
+        GameTooltip:AddLine("What this session's catches are worth, plus any coins you fished up. " ..
+            "Uses Auctionator's auction prices when it has one, otherwise the vendor price.", 1, 1, 1, true)
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Per hour is measured from your first cast this session. Clear Session restarts it.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    valueHover:SetScript("OnLeave", GameTooltip_Hide)
+
+    -- Tick the time once a second while the window is open and you're fishing
+    local sinceTick = 0
+    frame:SetScript("OnUpdate", function(_, elapsed)
+        sinceTick = sinceTick + elapsed
+        if sinceTick >= 1 then
+            sinceTick = 0
+            if BB.cache.isFishing then BB:UpdateStatsLine() end
+        end
+    end)
     
     -- Create session label
     local sessionLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    sessionLabel:SetPoint("TOPLEFT", statsText, "BOTTOMLEFT", 0, -10)
+    sessionLabel:SetPoint("TOPLEFT", valueText, "BOTTOMLEFT", 0, -10)
     sessionLabel:SetText("Session Fish:")
     sessionLabel:SetTextColor(1, 0.8, 0)
     
@@ -111,7 +140,7 @@ function BB:CreateTrackerFrame()
     
     -- Create content frame for scroll frame
     local content = CreateFrame("Frame", "BobberBuddyScrollFrameContent", scrollFrame)
-    content:SetSize(scrollFrame:GetWidth(), 400) -- Make it taller than visible area for scrolling
+    content:SetSize(190, 80) -- height grows with the list in UpdateFishTrackerUI
     scrollFrame:SetScrollChild(content)
     self.ui.content = content
     
@@ -121,14 +150,27 @@ function BB:CreateTrackerFrame()
     
     -- Create clear session button
     local clearButton = CreateFrame("Button", "BobberBuddyClearButton", frame, "UIPanelButtonTemplate")
-    clearButton:SetSize(90, 24)
+    clearButton:SetSize(80, 24)
     clearButton:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 10, 8)
-    clearButton:SetText("Clear Session")
+    clearButton:SetText("Clear")
     clearButton:SetScript("OnClick", function() BB:ClearSessionData() end)
-    
+    clearButton:SetScript("OnEnter", function(btn)
+        GameTooltip:SetOwner(btn, "ANCHOR_TOP")
+        GameTooltip:SetText("Clear this session's list (your lifetime log is kept)", nil, nil, nil, nil, true)
+        GameTooltip:Show()
+    end)
+    clearButton:SetScript("OnLeave", GameTooltip_Hide)
+
+    -- Fishing log button
+    local logButton = CreateFrame("Button", "BobberBuddyLogButton", frame, "UIPanelButtonTemplate")
+    logButton:SetSize(60, 24)
+    logButton:SetPoint("BOTTOM", frame, "BOTTOM", 0, 8)
+    logButton:SetText("Log")
+    logButton:SetScript("OnClick", function() BB:ToggleFishingLog() end)
+
     -- Create settings button
     local settingsButton = CreateFrame("Button", "BobberBuddySettingsButton", frame, "UIPanelButtonTemplate")
-    settingsButton:SetSize(90, 24)
+    settingsButton:SetSize(80, 24)
     settingsButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -10, 8)
     settingsButton:SetText("Settings")
     settingsButton:SetScript("OnClick", function() BB:OpenSettings() end)
@@ -138,18 +180,81 @@ function BB:CreateTrackerFrame()
     
     -- Create confirmation dialog for reset
     StaticPopupDialogs["BOBBERBUDDY_CONFIRM_RESET"] = {
-        text = "Are you sure you want to reset all fish tracking data?\nThis cannot be undone!",
+        text = "Reset all Bobber Buddy data?\nThis clears every catch, your cast count, fishing time and lures used.\nThis cannot be undone!",
         button1 = "Yes",
         button2 = "No",
         OnAccept = function() BB:ClearAllData() end,
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,
+        preferredIndex = 3, -- avoids clashing with Blizzard's own popups
     }
     
     -- Initialize list items
     self.ui.listItems = {}
     self:UpdateFishTrackerUI()
+end
+
+-- Casts and time line; cheap enough to refresh every second
+function BB:UpdateStatsLine()
+    if not self.ui or not self.ui.statsText then return end
+    local casts = self.db.stats.fishingCasts or 0
+    self.ui.statsText:SetText("Casts: " .. casts .. "  |  Time: " .. SecondsToTime(self:GetTimeSpentFishing()))
+
+    local perHour = self:GetGoldPerHour()
+    self.ui.valueText:SetText("Value: " .. BB.FormatMoney(self:GetSessionValue()) ..
+        "  |  " .. (perHour and (BB.FormatMoney(perHour) .. " /hr") or "-- /hr"))
+end
+
+-- One row in the session list: icon, name (quality colored), count; hover for the item tooltip
+local function CreateFishRow(parent)
+    local row = CreateFrame("Button", nil, parent)
+    row:SetSize(180, 20)
+
+    local icon = row:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(16, 16)
+    icon:SetPoint("LEFT", row, "LEFT", 2, 0)
+    row.icon = icon
+
+    local nameText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    nameText:SetPoint("LEFT", icon, "RIGHT", 5, 0)
+    nameText:SetPoint("RIGHT", row, "RIGHT", -30, 0)
+    nameText:SetJustifyH("LEFT")
+    nameText:SetWordWrap(false)
+    row.nameText = nameText
+
+    local countText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    countText:SetPoint("RIGHT", row, "RIGHT", -2, 0)
+    countText:SetJustifyH("RIGHT")
+    row.countText = countText
+
+    local highlight = row:CreateTexture(nil, "HIGHLIGHT")
+    highlight:SetAllPoints()
+    highlight:SetColorTexture(1, 1, 1, 0.08)
+
+    row:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        if self.itemID then
+            GameTooltip:SetItemByID(self.itemID)
+        else
+            GameTooltip:SetText(self.fishName)
+        end
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddDoubleLine("Caught this session:", self.count, 0.5, 0.8, 1, 1, 1, 1)
+        local each, source = BB:GetItemValue(self.itemID)
+        if each > 0 then
+            GameTooltip:AddDoubleLine("Worth (" .. source .. "):",
+                BB.FormatMoney(each * self.count), 0.5, 0.8, 1, 1, 1, 1)
+        end
+        GameTooltip:Show()
+    end)
+    row:SetScript("OnLeave", GameTooltip_Hide)
+    -- Shift-click to link it in chat, like a bag item
+    row:SetScript("OnClick", function(self)
+        local link = self.itemID and select(2, BB.compat.GetItemInfo(self.itemID))
+        if link and HandleModifiedItemClick then HandleModifiedItemClick(link) end
+    end)
+    return row
 end
 
 -- Update fish tracker UI
@@ -167,11 +272,8 @@ function BB:UpdateFishTrackerUI()
     self.ui.sessionText:SetText("Session Catches: " .. sessionTotal)
     self.ui.totalText:SetText("Total Catches: " .. lifetimeTotal)
     
-    -- Update stats
-    local casts = self.db.stats.fishingCasts or 0
-    local timeSpent = self.db.stats.timeSpentFishing or 0
-    self.ui.statsText:SetText("Casts: " .. casts .. "  |  Time: " .. SecondsToTime(timeSpent))
-    
+    self:UpdateStatsLine()
+
     -- Get fish data
     local fishData = self:GetSortedSessionFish()
     
@@ -183,33 +285,27 @@ function BB:UpdateFishTrackerUI()
     -- Create or update list items
     local yOffset = 5
     for i, fish in ipairs(fishData) do
-        -- Create new list item if needed
-        if not self.ui.listItems[i] then
-            local item = CreateFrame("Frame", "BobberBuddyListItem" .. i, self.ui.content)
-            item:SetSize(self.ui.content:GetWidth() - 10, 20)
-            
-            local nameText = item:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-            nameText:SetPoint("LEFT", item, "LEFT", 5, 0)
-            nameText:SetJustifyH("LEFT")
-            nameText:SetWidth(150)
-            item.nameText = nameText
-            
-            local countText = item:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-            countText:SetPoint("RIGHT", item, "RIGHT", -5, 0)
-            countText:SetJustifyH("RIGHT")
-            item.countText = countText
-            
-            self.ui.listItems[i] = item
+        self.ui.listItems[i] = self.ui.listItems[i] or CreateFishRow(self.ui.content)
+        local row = self.ui.listItems[i]
+        row:Show()
+        row:SetPoint("TOPLEFT", self.ui.content, "TOPLEFT", 0, -yOffset)
+
+        local itemID = self:GetFishItemID(fish.name)
+        row.itemID, row.fishName, row.count = itemID, fish.name, fish.count
+
+        -- Icon is available instantly; quality color once the game has the item cached
+        local icon = itemID and select(5, BB.compat.GetItemInfoInstant(itemID))
+        row.icon:SetTexture(icon or 134400) -- question mark until known
+        local quality = itemID and select(3, BB.compat.GetItemInfo(itemID))
+        local color = quality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality]
+        if color then
+            row.nameText:SetTextColor(color.r, color.g, color.b)
+        else
+            row.nameText:SetTextColor(1, 1, 1)
         end
-        
-        -- Update list item
-        local item = self.ui.listItems[i]
-        item:Show()
-        item:SetPoint("TOPLEFT", self.ui.content, "TOPLEFT", 5, -yOffset)
-        
-        item.nameText:SetText(fish.name)
-        item.countText:SetText(fish.count)
-        
+        row.nameText:SetText(fish.name)
+        row.countText:SetText(fish.count)
+
         yOffset = yOffset + 20
     end
     
@@ -239,13 +335,39 @@ end
 -- Toggle tracker visibility
 function BB:UpdateTrackerVisibility()
     if self.ui and self.ui.trackerFrame then
-        local showTracker = self:GetSetting("showTracker")
-        if showTracker then
-            self.ui.trackerFrame:Show()
-        else
-            self.ui.trackerFrame:Hide()
-        end
+        self.ui.trackerFrame:SetShown(self:GetSetting("showTracker") and true or false)
     end
+end
+
+-- Show the tracker when you pick up a fishing pole (and optionally hide it when you put it away).
+-- Only reacts when the main hand actually changes between pole and not-pole.
+local poleWatcher = CreateFrame("Frame")
+poleWatcher:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+poleWatcher:RegisterEvent("PLAYER_ENTERING_WORLD")
+poleWatcher:SetScript("OnEvent", function(_, event, slot)
+    if not BB.db then return end
+    if event == "PLAYER_EQUIPMENT_CHANGED" and slot ~= (INVSLOT_MAINHAND or 16) then return end
+
+    local hasPole = BB:IsFishingPoleEquipped()
+    if event == "PLAYER_ENTERING_WORLD" then
+        BB.hadPoleEquipped = hasPole -- just remember the starting state
+        return
+    end
+    if hasPole == BB.hadPoleEquipped then return end
+    BB.hadPoleEquipped = hasPole
+
+    if hasPole and BB:GetSetting("showTrackerWithPole") then
+        BB:SetSetting("showTracker", true)
+        BB:UpdateTrackerVisibility()
+    elseif not hasPole and BB:GetSetting("hideTrackerWithoutPole") then
+        BB:SetSetting("showTracker", false)
+        BB:UpdateTrackerVisibility()
+    end
+end)
+
+function BB:SaveTrackerPosition()
+    local point, _, relativePoint, x, y = self.ui.trackerFrame:GetPoint()
+    self:SetSetting("trackerPosition", { point, relativePoint, x, y })
 end
 
 -- Reset tracker position
@@ -253,11 +375,7 @@ function BB:ResetTrackerPosition()
     if self.ui and self.ui.trackerFrame then
         self.ui.trackerFrame:ClearAllPoints()
         self.ui.trackerFrame:SetPoint("RIGHT", UIParent, "RIGHT", -50, 0)
-        
-        -- Save the new position
-        local point, relativeTo, relativePoint, xOfs, yOfs = self.ui.trackerFrame:GetPoint()
-        self:SetSetting("trackerPosition", {point, relativeTo, relativePoint, xOfs, yOfs})
-        
-        print("|cFF80FF80BobberBuddy|r: Tracker position has been reset.")
+        self:SaveTrackerPosition()
+        print("|cFF80FF80Bobber Buddy|r: Tracker position has been reset.")
     end
 end

@@ -1,257 +1,386 @@
 --[[
     BobberBuddy - Core Module
-    Main functionality for the fishing automation
+    One hotkey: equips your pole, applies your best lure, casts, and reels in.
+
+    Modern clients (Retail and WoW Forever) only allow casting, using items and
+    interacting from a real key press on a secure button. So instead of doing
+    those things directly, we re-point one secure button before every press
+    (PreClick), and while the bobber is out we temporarily bind the same key to
+    "Interact With Target" so the next press reels in.
 ]]
 
--- Create addon namespace and initialize variables
-BobberBuddy = {}
+local ADDON_NAME = ...
+BobberBuddy = BobberBuddy or {}
 local BB = BobberBuddy
-BB.name = "BobberBuddy"
+BB.name = ADDON_NAME or "BobberBuddy"
 
--- Check if we're running in WoW environment
-if GetAddOnMetadata then
-    BB.version = GetAddOnMetadata("BobberBuddy", "Version") or "1.0"
-else
-    BB.version = "1.0"
-end
+---------------------------------------------------------------------------
+-- API compatibility (Forever/Retail use C_* namespaces; older clients don't)
+---------------------------------------------------------------------------
+local C = {}
+BB.compat = C
 
--- Detect WoW version
-if WOW_PROJECT_ID and WOW_PROJECT_MAINLINE then
-    BB.isRetail = WOW_PROJECT_ID == WOW_PROJECT_MAINLINE
-    BB.isClassic = WOW_PROJECT_ID == WOW_PROJECT_CLASSIC
-    BB.isTBC = WOW_PROJECT_ID == WOW_PROJECT_BURNING_CRUSADE_CLASSIC
-    BB.isWrath = WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC
-else
-    -- Default to Classic for external testing
-    BB.isRetail = false
-    BB.isClassic = true
-    BB.isTBC = false
-    BB.isWrath = false
-end
+C.GetAddOnMetadata  = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
+C.GetItemInfo       = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+C.GetItemInfoInstant = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
+C.GetContainerNumSlots = (C_Container and C_Container.GetContainerNumSlots) or GetContainerNumSlots
+C.GetContainerItemID   = (C_Container and C_Container.GetContainerItemID) or GetContainerItemID
 
--- Provide SecondsToTime function if not available (WoW API function)
-if not SecondsToTime then
-    function SecondsToTime(seconds)
-        local minutes = math.floor(seconds / 60)
-        local hours = math.floor(minutes / 60)
-        minutes = minutes % 60
-        seconds = seconds % 60
-        
-        if hours > 0 then
-            return string.format("%d:%02d:%02d", hours, minutes, seconds)
-        else
-            return string.format("%d:%02d", minutes, seconds)
-        end
+function C.GetSpellName(spellID)
+    if C_Spell and C_Spell.GetSpellName then
+        return C_Spell.GetSpellName(spellID)
+    elseif GetSpellInfo then
+        return (GetSpellInfo(spellID))
     end
 end
+
+-- Midnight-era clients can hand addons "secret" values that error when compared.
+function C.IsSecret(value)
+    return issecretvalue ~= nil and issecretvalue(value)
+end
+
+BB.version = (C.GetAddOnMetadata and C.GetAddOnMetadata(BB.name, "Version")) or "?"
+
+---------------------------------------------------------------------------
+-- Constants
+---------------------------------------------------------------------------
+BB.BUTTON_NAME = "BobberBuddyFishingButton"
+BB.BINDING = "CLICK " .. BB.BUTTON_NAME .. ":LeftButton"
+
+-- Key binding labels (shown under Key Bindings > Bobber Buddy)
+BINDING_HEADER_BOBBERBUDDY = "Bobber Buddy"
+_G["BINDING_NAME_" .. BB.BINDING] = "Fish (cast / reel in)"
+
+-- Known Fishing spell IDs across versions (ranks in Classic, one ID in Retail).
+-- We also match by name, so a new ID on Forever still works.
+local FISHING_SPELL_IDS = {
+    [7620] = true, [7731] = true, [7732] = true, [18248] = true, -- Classic ranks
+    [33095] = true, [51294] = true, [88868] = true,             -- TBC / Wrath / Cata
+    [131474] = true, [131490] = true,                           -- Retail
+}
+
+-- Weapon class 2, subclass 20 = Fishing Pole (language-independent)
+local ITEM_CLASS_WEAPON = 2
+local WEAPON_SUBCLASS_FISHING_POLE = 20
+
+-- Lures: [itemID] = skill bonus
+BB.LURES = {
+    [6529]  = 25,  -- Shiny Bauble
+    [6530]  = 50,  -- Nightcrawlers
+    [6811]  = 50,  -- Aquadynamic Fish Lens
+    [6532]  = 75,  -- Bright Baubles
+    [7307]  = 75,  -- Flesh Eating Worm
+    [6533]  = 100, -- Aquadynamic Fish Attractor
+    [34861] = 100, -- Sharpened Fish Hook
+    [46006] = 100, -- Glow Worm
+    [116825] = 200, -- Bladebone Hook
+}
 
 -- Default settings
 BB.defaults = {
     enableAutoLure = true,
-    enableAutoBobberClick = true,
+    enableFishingGear = true,
+    enableBuffItems = true,
+    oneKeyReel = true,
+    fishingSound = true,
+    fishingVolumeBoost = 200, -- fishing volume in % of your normal master volume (100 = unchanged)
+    soundRestoreDelay = 15, -- seconds after the last cast before sounds come back
+    muteCrafting = true,
+    muteSpells = false,
+    muteFootsteps = false,
+    muteVoices = false,
     showTracker = true,
-    hotkey = "F2",
+    showTrackerWithPole = true,
+    hideTrackerWithoutPole = true,
+    showMinimapButton = true,
 }
 
--- Initialize saved variables
-BB.db = {}
+-- Second key binding: swap back to normal gear
+BINDING_NAME_BOBBERBUDDY_RESTORE = "Swap back to normal gear"
 
--- Constants
-local FISHING_SPELL_ID = 131474 -- Retail spell ID
-local FISHING_SPELL_ID_CLASSIC = 7620 -- Classic spell ID
-local FISHING_SPELL_NAME = "Fishing"
-
--- Lure information (ID, bonus)
-local LURES = {
-    -- Items that can be applied to fishing poles to increase skill
-    -- Format: [itemID] = {bonus, duration}
-    [34861] = {100, 10}, -- Sharpened Fish Hook (+100 for 10 min)
-    [6533] = {100, 10},  -- Aquadynamic Fish Attractor (+100 for 10 min)
-    [7307] = {75, 10},   -- Flesh Eating Worm (+75 for 10 min)
-    [6532] = {75, 10},   -- Bright Baubles (+75 for 10 min)
-    [6530] = {50, 10},   -- Nightcrawlers (+50 for 10 min)
-    [6529] = {25, 10},   -- Shiny Bauble (+25 for 10 min)
-    -- Retail lures
-    [116825] = {200, 10}, -- Bladebone Hook
-    [133717] = {150, 10}, -- Leyshimmer Blenny
-    [133720] = {200, 10}, -- Leyshimmer Blenny' Sleeping with the Fishes
-    [133795] = {100, 10}, -- Underlight Angler
-    [168302] = {100, 10}, -- Scarlet Herring Lure 
-    [165699] = {100, 10}, -- Drain Minnow
-}
-
--- Fishing pole item types
-local FISHING_POLE_TYPES = {
-    "Fishing Pole",
-    "Fishing Rod"
-}
-
--- Initialize the addon
-function BB:Init()
-    -- Check if we're in WoW environment
-    if not CreateFrame then
-        print("BobberBuddy: Not running in WoW environment, skipping initialization")
-        return
-    end
-    
-    -- Register events
-    local frame = CreateFrame("Frame")
-    frame:RegisterEvent("ADDON_LOADED")
-    frame:RegisterEvent("LOOT_OPENED")
-    frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
-    frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
-    frame:RegisterEvent("PLAYER_LOGOUT")
-    frame:SetScript("OnEvent", function(self, event, ...)
-        if event == "ADDON_LOADED" and ... == BB.name then
+---------------------------------------------------------------------------
+-- Startup
+---------------------------------------------------------------------------
+local events = CreateFrame("Frame")
+BB.eventFrame = events
+events:RegisterEvent("ADDON_LOADED")
+events:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+events:RegisterEvent("PLAYER_REGEN_ENABLED")
+events:RegisterEvent("PLAYER_LOGOUT")
+events:SetScript("OnEvent", function(_, event, ...)
+    if event == "ADDON_LOADED" then
+        if ... == BB.name then
+            events:UnregisterEvent("ADDON_LOADED")
             BB:OnAddonLoaded()
-        elseif event == "LOOT_OPENED" then
-            BB:OnLootOpened()
-        elseif event == "PLAYER_EQUIPMENT_CHANGED" then
-            BB:OnEquipmentChanged(...)
-        elseif event == "ZONE_CHANGED_NEW_AREA" then
-            BB:OnZoneChanged()
-        elseif event == "PLAYER_LOGOUT" then
-            BB:OnLogout()
         end
-    end)
-    
-    -- Set up fishing hotkey
-    self:SetupHotkey()
-end
+    elseif event == "ZONE_CHANGED_NEW_AREA" then
+        BB.cache.lastZone = GetRealZoneText() or "Unknown"
+        BB:UpdateFishTrackerUI()
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        BB:EndReelMode() -- finish anything combat prevented us from undoing
+    elseif event == "PLAYER_LOGOUT" then
+        BB:OnLogout()
+    end
+end)
 
--- Handle hotkey press (called from bindings)
-function BB:OnHotkey()
-    -- This function is called from the keybind in Bindings.xml
-    
-    -- If bobber is already present, try to click it
-    if self:IsBobberTarget() then
-        self:ClickBobber()
-        return
-    end
-    
-    -- Check if we need to equip a fishing pole
-    if not self:IsFishingPoleEquipped() then
-        self:EquipBestFishingPole()
-    end
-    
-    -- Check if we need to apply a lure
-    local enableAutoLure = self:GetSetting("enableAutoLure")
-    if enableAutoLure and not self:HasActiveLure() then
-        local lureApplied = self:ApplyBestLure()
-        if lureApplied then
-            self:TrackLureUsage()
-        end
-    end
-    
-    -- Cast fishing
-    local fishingSpellID = self.isRetail and FISHING_SPELL_ID or FISHING_SPELL_ID_CLASSIC
-    CastSpellByID(fishingSpellID)
-    self:TrackFishingCast()
-    
-    -- Set up post-cast action for bobber clicking
-    local enableAutoBobberClick = self:GetSetting("enableAutoBobberClick")
-    if enableAutoBobberClick then
-        C_Timer.After(0.5, function() self:WatchForBobber() end)
-    end
-end
-
--- Called when addon is fully loaded
 function BB:OnAddonLoaded()
-    -- Initialize cache
-    if not self.cache then
-        self.cache = {}
-    end
-    
-    -- Initialize database first
     self:InitDatabase()
-    
-    -- Initialize modules after all files are loaded
+    self.cache.lastZone = GetRealZoneText() or "Unknown"
+    self.failedLures = {}
+
+    self:RestoreSoftInteractCVar() -- in case we reloaded mid-cast
+    self:RestoreSound()
+    self:CreateFishingButton()
     self:InitFishTracker()
     self:InitUI()
+    self:InitMinimapButton()
     self:InitSettings()
-    
-    -- Check for fishing pole equipped
-    self:CheckEquippedFishingPole()
-    
-    -- Check current zone
-    self.cache.lastZone = GetRealZoneText() or "Unknown"
-    
-    print("|cFF80FF80" .. self.name .. " v" .. self.version .. " loaded. Type /bb or /bobberbuddy for options.|r")
+    self:RegisterSlashCommands()
+
+    print("|cFF80FF80Bobber Buddy v" .. self.version .. " loaded.|r Set your fishing key in /bb config or Key Bindings > Bobber Buddy. Type /bb for help.")
 end
 
--- Called when player changes equipment
-function BB:OnEquipmentChanged(slot)
-    if slot == 16 or slot == 17 then -- Main hand or offhand
-        self:CheckEquippedFishingPole()
-    end
-end
-
--- Check if fishing pole is equipped and update tracking
-function BB:CheckEquippedFishingPole()
-    -- Ensure cache exists
-    if not self.cache then
-        self.cache = {}
-    end
-    
-    self.cache.fishingPoleEquipped = self:IsFishingPoleEquipped()
-end
-
--- Called when player changes zone
-function BB:OnZoneChanged()
-    local currentZone = GetRealZoneText() or "Unknown"
-    
-    -- Make sure cache exists before using it
-    if not self.cache then
-        self.cache = {}
-    end
-    
-    self.cache.lastZone = currentZone
-end
-
--- Called when player logs out
 function BB:OnLogout()
-    -- Save session time
-    if self.db and self.db.stats then
-        local sessionDuration = time() - (self.db.stats.sessionStartTime or time())
-        if sessionDuration > 0 then
-            self.db.stats.totalPlayTime = (self.db.stats.totalPlayTime or 0) + sessionDuration
+    self:RestoreSound()
+    if self.cache.isFishing then
+        self:TrackFishingEnd()
+    end
+    local sessionDuration = time() - (self.cache.sessionStartTime or time())
+    if sessionDuration > 0 then
+        self.db.stats.totalPlayTime = (self.db.stats.totalPlayTime or 0) + sessionDuration
+    end
+end
+
+---------------------------------------------------------------------------
+-- Fishing spell helpers
+---------------------------------------------------------------------------
+function BB:GetFishingSpellName()
+    if not self.fishingSpellName then
+        self.fishingSpellName = C.GetSpellName(7620) or C.GetSpellName(131474) or "Fishing"
+    end
+    return self.fishingSpellName
+end
+
+function BB:IsFishingSpell(spellID)
+    if not spellID or C.IsSecret(spellID) then return false end
+    if FISHING_SPELL_IDS[spellID] then return true end
+    local name = C.GetSpellName(spellID)
+    return name ~= nil and not C.IsSecret(name) and name == self:GetFishingSpellName()
+end
+
+---------------------------------------------------------------------------
+-- Gear helpers
+---------------------------------------------------------------------------
+function BB:IsFishingPole(item)
+    if not item then return false end
+    local _, _, _, _, _, classID, subclassID = C.GetItemInfoInstant(item)
+    return classID == ITEM_CLASS_WEAPON and subclassID == WEAPON_SUBCLASS_FISHING_POLE
+end
+
+function BB:IsFishingPoleEquipped()
+    return self:IsFishingPole(GetInventoryItemID("player", INVSLOT_MAINHAND or 16))
+end
+
+-- Calls fn(itemID) for every item in the backpack and equipped bags
+local function ForEachBagItem(fn)
+    for bag = 0, NUM_BAG_SLOTS or 4 do
+        for slot = 1, C.GetContainerNumSlots(bag) or 0 do
+            local itemID = C.GetContainerItemID(bag, slot)
+            if itemID then fn(itemID) end
         end
     end
-    
-    -- Ensure cache exists
-    if not self.cache then
-        self.cache = {}
-    end
-    
-    -- If currently fishing, track fishing time
-    if self.cache.isFishing and self.cache.fishingStart and self.cache.fishingStart > 0 then
-        self:TrackFishingEnd(false)
+end
+BB.ForEachBagItem = ForEachBagItem
+
+-- Lures in Classic-style fishing are temporary main-hand enchants
+function BB:HasActiveLure()
+    local hasMainHandEnchant = GetWeaponEnchantInfo()
+    return hasMainHandEnchant and true or false
+end
+
+-- Can you use this item right now? (level/skill requirements - what greys out action bar items)
+C.IsUsableItem = (C_Item and C_Item.IsUsableItem) or IsUsableItem
+-- Item's level requirement met? (unknown until the item is cached - then assume yes)
+function BB:MeetsLevel(itemID)
+    local minLevel = select(5, C.GetItemInfo(itemID))
+    return not minLevel or minLevel <= UnitLevel("player")
+end
+
+function BB:CanUseItem(itemID)
+    if self.failedLures[itemID] then return false end -- the game already said no this session
+    if not self:MeetsLevel(itemID) then return false end
+    if not C.IsUsableItem then return true end
+    local usable = C.IsUsableItem(itemID)
+    return usable and true or false
+end
+
+-- Stop trying an item for the rest of this session, and say which one
+function BB:SkipItem(itemID, reason)
+    if not itemID or self.failedLures[itemID] then return end
+    self.failedLures[itemID] = true
+    local link = select(2, C.GetItemInfo(itemID)) or ("item " .. itemID)
+    print("|cFF80FF80Bobber Buddy|r: Skipping " .. link .. " for this session (" .. reason .. ").")
+end
+
+-- After a gear swap, check what actually went on; anything that didn't (level, skill,
+-- unique-equipped...) is skipped so the fishing key doesn't keep trying it every press
+function BB:VerifyGearSwap(attempts)
+    C_Timer.After(1.5, function()
+        if InCombatLockdown() then return end
+        for _, a in ipairs(attempts) do
+            if GetInventoryItemID("player", a.slot) ~= a.id then
+                self:SkipItem(a.id, "it couldn't be equipped")
+            end
+        end
+    end)
+end
+
+-- Remember which item a key press tried to use, so a "can't use" error can be pinned on it
+function BB:NoteItemAttempt(itemID)
+    self.lastItemAttempt = { id = itemID, time = GetTime() }
+end
+
+function BB:OnUIError(message)
+    local attempt = self.lastItemAttempt
+    if not attempt or GetTime() - attempt.time > 1.5 then return end
+    if message and not C.IsSecret(message) and (message == ERR_CANT_USE_ITEM or message == ERR_ITEM_CANNOT_BE_USED
+        or message == SPELL_FAILED_LOW_CASTLEVEL or message == ERR_USE_LOCKED_WITH_ITEM_S
+        or message:lower():find("can't use", 1, true)) then
+        self:SkipItem(attempt.id, "the game says it can't be used yet")
+        self.db.buffUsed[attempt.id] = nil
+        self.pendingLure, self.pendingBuff, self.lastItemAttempt = nil, nil, nil
     end
 end
 
--- Create keybinding for fishing
-function BB:SetupHotkey()
-    -- Check if we're in WoW environment
-    if not CreateFrame then
-        print("BobberBuddy: Not running in WoW environment, skipping hotkey setup")
+function BB:FindBestLure()
+    local bestID, bestBonus = nil, 0
+    ForEachBagItem(function(itemID)
+        local bonus = self.LURES[itemID]
+        if bonus and bonus > bestBonus and self:CanUseItem(itemID) then
+            bestID, bestBonus = itemID, bonus
+        end
+    end)
+    return bestID
+end
+
+---------------------------------------------------------------------------
+-- The secure fishing button
+---------------------------------------------------------------------------
+function BB:CreateFishingButton()
+    local button = CreateFrame("Button", self.BUTTON_NAME, UIParent, "SecureActionButtonTemplate")
+    button:SetSize(1, 1)
+    button:SetPoint("TOPLEFT", UIParent, "TOPLEFT", -10, 10)
+    -- Modern clients fire bound clicks on key down or key up depending on the
+    -- ActionButtonUseKeyDown CVar; registering both lets the template pick.
+    button:RegisterForClicks("AnyUp", "AnyDown")
+    button:SetAttribute("type", "spell")
+    button:SetAttribute("spell", self:GetFishingSpellName())
+    button:SetScript("PreClick", function(btn, _, down)
+        BB:PrepareButton(btn, down)
+    end)
+    self.fishingButton = button
+end
+
+local function SetMacro(button, text)
+    button:SetAttribute("type", "macro")
+    button:SetAttribute("macrotext", text)
+end
+
+-- Decide what this key press should do:
+-- equip fishing gear > use buff food/drink > apply lure > cast
+function BB:PrepareButton(button, down)
+    -- With both edges registered, PreClick runs twice; only act on the edge that fires
+    if down ~= nil and down ~= GetCVarBool("ActionButtonUseKeyDown") then return end
+    if InCombatLockdown() then return end -- attributes are locked; it will just cast
+
+    -- Busy casting a lure, or sitting down eating: do nothing so we don't interrupt it
+    if UnitCastingInfo("player") or UnitChannelInfo("player") or self:IsEating() then
+        button:SetAttribute("type", nil)
         return
     end
-    
-    -- Create fishing secure button
-    local fishingButton = CreateFrame("Button", "BobberBuddyFishingButton", nil, "SecureActionButtonTemplate")
-    fishingButton:SetAttribute("type", "macro")
-    fishingButton:SetAttribute("macrotext", "/click BobberBuddyFishingMacro")
-    
-    -- Create secure macro button
-    local macroButton = CreateFrame("Button", "BobberBuddyFishingMacro", nil, "SecureActionButtonTemplate")
-    macroButton:SetScript("PreClick", function() BB:PreFishing() end)
-    macroButton:SetAttribute("type", "macro")
-    macroButton:SetAttribute("macrotext", "/cast " .. FISHING_SPELL_NAME)
-    
-    -- Register with key binding UI
-    _G["BINDING_NAME_CLICK BobberBuddyFishingButton:LeftButton"] = "BobberBuddy: Fish"
-    
-    -- Register slash commands
+
+    local gearMacro, gearAttempts = self:BuildGearMacro()
+    if gearMacro then
+        SetMacro(button, gearMacro)
+        self:VerifyGearSwap(gearAttempts)
+        return
+    end
+
+    if self:GetSetting("enableBuffItems") then
+        local buffItem = self:FindBuffItem()
+        if buffItem then
+            self:MarkBuffUsed(buffItem)
+            self:NoteItemAttempt(buffItem)
+            SetMacro(button, "/use item:" .. buffItem)
+            return
+        end
+    end
+
+    if self:IsFishingPoleEquipped() and self:GetSetting("enableAutoLure") then
+        if self:HasActiveLure() then
+            self.pendingLure = nil
+        else
+            -- Last press tried a lure and it didn't stick (e.g. skill too low): skip that lure
+            if self.pendingLure and GetTime() - self.pendingLure.time < 30 then
+                self.failedLures[self.pendingLure.id] = true
+            end
+            self.pendingLure = nil
+
+            local lure = self:FindBestLure()
+            if lure then
+                self.pendingLure = { id = lure, time = GetTime() }
+                self:NoteItemAttempt(lure)
+                SetMacro(button, "/use item:" .. lure .. "\n/use " .. (INVSLOT_MAINHAND or 16))
+                self:TrackLureUsage()
+                return
+            end
+        end
+    end
+
+    button:SetAttribute("type", "spell")
+    button:SetAttribute("spell", self:GetFishingSpellName())
+end
+
+---------------------------------------------------------------------------
+-- Reel mode: while the bobber is out, the fishing key becomes "Interact"
+---------------------------------------------------------------------------
+local reelOwner = CreateFrame("Frame") -- owner for our override bindings
+
+function BB:StartReelMode()
+    if not self:GetSetting("oneKeyReel") or InCombatLockdown() then return end
+
+    local keys = { GetBindingKey(self.BINDING) }
+    if #keys == 0 then return end
+    for _, key in ipairs(keys) do
+        SetOverrideBinding(reelOwner, true, key, "INTERACTTARGET")
+    end
+
+    -- Soft-interact lets "Interact With Target" pick up the bobber without targeting it
+    if GetCVar("SoftTargetInteract") ~= "3" then
+        self.db.savedSoftInteract = GetCVar("SoftTargetInteract")
+        SetCVar("SoftTargetInteract", "3")
+    end
+    self.reelMode = true
+end
+
+function BB:EndReelMode()
+    if not self.reelMode or InCombatLockdown() then return end
+    ClearOverrideBindings(reelOwner)
+    self:RestoreSoftInteractCVar()
+    self.reelMode = false
+end
+
+function BB:RestoreSoftInteractCVar()
+    if self.db and self.db.savedSoftInteract and not InCombatLockdown() then
+        SetCVar("SoftTargetInteract", self.db.savedSoftInteract)
+        self.db.savedSoftInteract = nil
+    end
+end
+
+---------------------------------------------------------------------------
+-- Slash commands
+---------------------------------------------------------------------------
+function BB:RegisterSlashCommands()
     SLASH_BOBBERBUDDY1 = "/bobberbuddy"
     SLASH_BOBBERBUDDY2 = "/bb"
     SlashCmdList["BOBBERBUDDY"] = function(msg)
@@ -259,360 +388,70 @@ function BB:SetupHotkey()
     end
 end
 
--- Process slash commands
 function BB:HandleSlashCommand(msg)
-    local args = {}
-    for arg in string.gmatch(msg, "%S+") do
-        table.insert(args, string.lower(arg))
-    end
-    
-    if #args == 0 or args[1] == "help" then
-        print("|cFF80FF80BobberBuddy Commands:|r")
-        print("  |cFFFFFF00/bb|r or |cFFFFFF00/bobberbuddy|r - Show this help")
+    local cmd = strtrim(msg or ""):lower()
+
+    if cmd == "" or cmd == "help" then
+        print("|cFF80FF80Bobber Buddy Commands:|r")
         print("  |cFFFFFF00/bb toggle|r - Toggle fish tracker display")
         print("  |cFFFFFF00/bb reset|r - Reset fish tracker position")
         print("  |cFFFFFF00/bb config|r - Open configuration panel")
         print("  |cFFFFFF00/bb stats|r - Show fishing statistics")
+        print("  |cFFFFFF00/bb log|r - Open your lifetime fishing log")
+        print("  |cFFFFFF00/bb gear|r - Swap back to your normal gear")
+        print("  |cFFFFFF00/bb minimap|r - Show/hide the minimap button")
         print("  |cFFFFFF00/bb clear|r - Clear session fish data")
         print("  |cFFFFFF00/bb clearall|r - Clear all fish tracking data (with confirmation)")
-        print("  |cFFFFFF00/bb clearnow|r - Clear all fish tracking data (no confirmation)")
-        print("\nBobberBuddy v" .. self.version .. " - Fishing utility addon")
-    elseif args[1] == "toggle" then
+        local key = GetBindingKey(self.BINDING)
+        print("Fishing key: " .. (key and ("|cFFFFFF00" .. key .. "|r") or "|cFFFF4040not bound|r - set it in /bb config or Key Bindings > Bobber Buddy"))
+    elseif cmd == "toggle" then
         self:SetSetting("showTracker", not self:GetSetting("showTracker"))
         self:UpdateTrackerVisibility()
-    elseif args[1] == "reset" then
+    elseif cmd == "reset" then
         self:ResetTrackerPosition()
-    elseif args[1] == "config" then
+    elseif cmd == "config" then
         self:OpenSettings()
-    elseif args[1] == "stats" then
+    elseif cmd == "stats" then
         self:ShowFishingStats()
-    elseif args[1] == "clear" then
-        print("|cFF80FF80BobberBuddy|r: Clearing session fish data...")
+    elseif cmd == "gear" then
+        self:RestoreGear()
+    elseif cmd == "log" then
+        self:ToggleFishingLog()
+    elseif cmd == "minimap" then
+        self:SetSetting("showMinimapButton", not self:GetSetting("showMinimapButton"))
+        self:UpdateMinimapButton()
+        print("|cFF80FF80Bobber Buddy|r: Minimap button " .. (self:GetSetting("showMinimapButton") and "shown." or "hidden. Type /bb minimap to bring it back."))
+    elseif cmd == "clear" then
         self:ClearSessionData()
-    elseif args[1] == "clearall" then
-        if StaticPopup_Show then
-            StaticPopup_Show("BOBBERBUDDY_CONFIRM_RESET")
-        else
-            print("BobberBuddy: Confirmation dialogs not available outside of WoW")
-            print("BobberBuddy: To reset all fish data, type /bb clearnow")
-        end
-    elseif args[1] == "clearnow" then
-        print("BobberBuddy: Clearing all fish data...")
-        self:ClearAllData()
-    end
-end
-
--- Show fishing statistics
-function BB:ShowFishingStats()
-    local sessionTotal = self:GetSessionTotal()
-    local lifetimeTotal = self:GetLifetimeTotal()
-    local casts = self.db.stats.fishingCasts or 0
-    local timeSpent = self.db.stats.timeSpentFishing or 0
-    local luresUsed = self.db.stats.luresUsed or 0
-    
-    -- Ensure cache exists
-    if not self.cache then
-        self.cache = {}
-    end
-    
-    local currentZone = self.cache.lastZone or GetRealZoneText() or "Unknown"
-    
-    print("|cFF80FF80BobberBuddy Statistics:|r")
-    print("Session fish caught: " .. sessionTotal)
-    print("Lifetime fish caught: " .. lifetimeTotal)
-    print("Total fishing casts: " .. casts)
-    print("Time spent fishing: " .. SecondsToTime(timeSpent))
-    print("Lures used: " .. luresUsed)
-    print("Current zone: " .. currentZone)
-    
-    -- Show top 3 fish for current zone
-    local zoneFish = self:GetZoneFishData(currentZone)
-    if next(zoneFish) then
-        print("\nTop fish in " .. currentZone .. ":")
-        
-        local sortedFish = {}
-        for fish, count in pairs(zoneFish) do
-            table.insert(sortedFish, {name = fish, count = count})
-        end
-        
-        table.sort(sortedFish, function(a,b) return a.count > b.count end)
-        
-        for i = 1, math.min(3, #sortedFish) do
-            print(i .. ". " .. sortedFish[i].name .. ": " .. sortedFish[i].count)
-        end
-    end
-end
-
--- Called before fishing action
-function BB:PreFishing()
-    -- Check if we need to equip a fishing pole
-    if not self:IsFishingPoleEquipped() then
-        self:EquipBestFishingPole()
-    end
-    
-    -- Check if we need to apply a lure
-    if self.db.enableAutoLure and not self:HasActiveLure() then
-        self:ApplyBestLure()
-    end
-    
-    -- Set up post-cast action for bobber clicking
-    if self.db.enableAutoBobberClick then
-        C_Timer.After(0.5, function() self:WatchForBobber() end)
-    end
-end
-
--- Check if a fishing pole is currently equipped
-function BB:IsFishingPoleEquipped()
-    local mainHandLink = GetInventoryItemLink("player", 16) -- 16 is main hand slot
-    if not mainHandLink then return false end
-    
-    local _, _, _, _, _, itemType = GetItemInfo(mainHandLink)
-    for _, poleType in ipairs(FISHING_POLE_TYPES) do
-        if itemType == poleType then
-            return true
-        end
-    end
-    
-    return false
-end
-
--- Equip the best fishing pole from bags
-function BB:EquipBestFishingPole()
-    local bestPoleSlot, bestPoleItem, bestPoleValue = nil, nil, 0
-    
-    -- Function to scan bags - handles both Classic and Retail API
-    local function ScanBags()
-        if BB.isRetail then
-            -- Retail API
-            for bagID = 0, NUM_BAG_SLOTS do
-                local slots = C_Container.GetContainerNumSlots(bagID)
-                for slot = 1, slots do
-                    local itemLink = C_Container.GetContainerItemLink(bagID, slot)
-                    if itemLink then
-                        local _, _, _, _, _, itemType, itemSubType, _, _, _, itemValue = GetItemInfo(itemLink)
-                        for _, poleType in ipairs(FISHING_POLE_TYPES) do
-                            if itemType == poleType and itemValue > bestPoleValue then
-                                bestPoleValue = itemValue
-                                bestPoleSlot = slot
-                                bestPoleItem = itemLink
-                                bestPoleBag = bagID
-                            end
-                        end
-                    end
-                end
-            end
-            
-            -- Equip the best pole if found
-            if bestPoleSlot and bestPoleBag then
-                C_Container.PickupContainerItem(bestPoleBag, bestPoleSlot)
-                EquipCursorItem(16) -- 16 is main hand slot
-                return true
-            end
-        else
-            -- Classic API
-            for bagID = 0, NUM_BAG_SLOTS do
-                local slots = GetContainerNumSlots(bagID)
-                for slot = 1, slots do
-                    local itemLink = GetContainerItemLink(bagID, slot)
-                    if itemLink then
-                        local _, _, _, _, _, itemType, itemSubType, _, _, _, itemValue = GetItemInfo(itemLink)
-                        for _, poleType in ipairs(FISHING_POLE_TYPES) do
-                            if itemType == poleType and itemValue > bestPoleValue then
-                                bestPoleValue = itemValue
-                                bestPoleSlot = slot
-                                bestPoleItem = itemLink
-                                bestPoleBag = bagID
-                            end
-                        end
-                    end
-                end
-            end
-            
-            -- Equip the best pole if found
-            if bestPoleSlot and bestPoleBag then
-                PickupContainerItem(bestPoleBag, bestPoleSlot)
-                EquipCursorItem(16) -- 16 is main hand slot
-                return true
-            end
-        end
-        return false
-    end
-    
-    return ScanBags()
-end
-
--- Check if player has an active lure buff
-function BB:HasActiveLure()
-    local i = 1
-    local name, _, _, _, _, expirationTime = UnitBuff("player", i)
-    
-    while name do
-        if string.find(name, "Fishing Lure") or 
-           string.find(name, "Bright Baubles") or 
-           string.find(name, "Nightcrawlers") or 
-           string.find(name, "Fish Attractor") or 
-           string.find(name, "Flesh Eating Worm") or 
-           string.find(name, "Shiny Bauble") or 
-           string.find(name, "Sharpened Fish Hook") or
-           string.find(name, "Bladebone Hook") or
-           string.find(name, "Leyshimmer Blenny") or
-           string.find(name, "Underlight Angler") then
-            return true
-        end
-        
-        i = i + 1
-        name, _, _, _, _, expirationTime = UnitBuff("player", i)
-    end
-    
-    return false
-end
-
--- Apply the best available lure from bags
-function BB:ApplyBestLure()
-    local bestLureID, bestLureBonus, bestLureBag, bestLureSlot = nil, 0, nil, nil
-    
-    -- Function to scan bags - handles both Classic and Retail API
-    local function ScanBags()
-        if BB.isRetail then
-            -- Retail API
-            for bagID = 0, NUM_BAG_SLOTS do
-                local slots = C_Container.GetContainerNumSlots(bagID)
-                for slot = 1, slots do
-                    local itemID = C_Container.GetContainerItemID(bagID, slot)
-                    if itemID and LURES[itemID] and LURES[itemID][1] > bestLureBonus then
-                        bestLureID = itemID
-                        bestLureBonus = LURES[itemID][1]
-                        bestLureBag = bagID
-                        bestLureSlot = slot
-                    end
-                end
-            end
-            
-            -- Apply the best lure if found
-            if bestLureSlot then
-                C_Container.UseContainerItem(bestLureBag, bestLureSlot)
-                return true
-            end
-        else
-            -- Classic API
-            for bagID = 0, NUM_BAG_SLOTS do
-                local slots = GetContainerNumSlots(bagID)
-                for slot = 1, slots do
-                    local itemID = GetContainerItemID(bagID, slot)
-                    if itemID and LURES[itemID] and LURES[itemID][1] > bestLureBonus then
-                        bestLureID = itemID
-                        bestLureBonus = LURES[itemID][1]
-                        bestLureBag = bagID
-                        bestLureSlot = slot
-                    end
-                end
-            end
-            
-            -- Apply the best lure if found
-            if bestLureSlot then
-                UseContainerItem(bestLureBag, bestLureSlot)
-                return true
-            end
-        end
-        return false
-    end
-    
-    return ScanBags()
-end
-
--- Watch for bobber to appear and set up click
-function BB:WatchForBobber()
-    local bobberWatchFrame = bobberWatchFrame or CreateFrame("Frame")
-    local elapsedTime = 0
-    local maxWatchTime = 15 -- Maximum time to watch for a bobber (in seconds)
-    
-    bobberWatchFrame:SetScript("OnUpdate", function(self, elapsed)
-        elapsedTime = elapsedTime + elapsed
-        
-        -- Stop watching if it's been too long
-        if elapsedTime > maxWatchTime then
-            self:SetScript("OnUpdate", nil)
-            return
-        end
-        
-        -- Check if bobber is our target and clickable
-        if BB:IsBobberTarget() then
-            -- Try clicking the bobber
-            self:SetScript("OnUpdate", nil)
-            BB:ClickBobber()
-        end
-    end)
-end
-
--- Check if the current target is a fishing bobber
-function BB:IsBobberTarget()
-    -- Check if mouse is over a bobber
-    local focusedFrame = GetMouseFocus()
-    if focusedFrame and focusedFrame:GetName() and string.find(focusedFrame:GetName(), "FishingBobber") then
-        return true
-    end
-    
-    -- Check game target
-    return (UnitName("softTarget") == "Fishing Bobber" or UnitName("target") == "Fishing Bobber")
-end
-
--- Attempt to click the bobber
-function BB:ClickBobber()
-    -- Use the interactable target system
-    if UnitName("softTarget") == "Fishing Bobber" then
-        InteractUnit("softTarget")
-    elseif UnitName("target") == "Fishing Bobber" then
-        InteractUnit("target")
+        print("|cFF80FF80Bobber Buddy|r: Session fish data cleared.")
+    elseif cmd == "clearall" then
+        StaticPopup_Show("BOBBERBUDDY_CONFIRM_RESET")
     else
-        -- Try to find and click a bobber frame
-        local focusedFrame = GetMouseFocus()
-        if focusedFrame and focusedFrame:GetName() and string.find(focusedFrame:GetName(), "FishingBobber") then
-            focusedFrame:Click()
-        end
+        print("|cFF80FF80Bobber Buddy|r: Unknown command. Type /bb for help.")
     end
 end
 
--- Handle a successful fishing catch
-function BB:OnLootOpened()
-    local numItems = GetNumLootItems()
-    local fishCaught = false
-    
-    -- Ensure cache exists
-    if not self.cache then
-        self.cache = {}
+function BB:ShowFishingStats()
+    local stats = self.db.stats
+    local currentZone = self.cache.lastZone or GetRealZoneText() or "Unknown"
+
+    print("|cFF80FF80Bobber Buddy Statistics:|r")
+    print("Session catches: " .. self:GetSessionTotal())
+    print("Lifetime catches: " .. self:GetLifetimeTotal())
+    print("Total fishing casts: " .. (stats.fishingCasts or 0))
+    print("Time spent fishing: " .. SecondsToTime(self:GetTimeSpentFishing()))
+    print("Lures used: " .. (stats.luresUsed or 0))
+    print("Current zone: " .. currentZone)
+
+    local sorted = {}
+    for fish, count in pairs(self:GetZoneFishData(currentZone)) do
+        table.insert(sorted, { name = fish, count = count })
     end
-    
-    for i = 1, numItems do
-        local lootIcon, lootName, lootQuantity = GetLootSlotInfo(i)
-        local lootLink = GetLootSlotLink(i)
-        
-        if lootLink then
-            local itemID = GetItemInfoFromHyperlink(lootLink)
-            local _, _, _, _, _, itemType, itemSubType = GetItemInfo(lootLink)
-            
-            -- Check if this is a fish item
-            if itemType == "Consumable" and 
-               (itemSubType == "Meat" or itemSubType == "Fish" or itemSubType == "Food & Drink") or
-               -- In Classic/TBC, fish might be categorized differently
-               (BB.isClassic and (string.find(lootName:lower(), "fish") or 
-                                string.find(lootName:lower(), "eel") or 
-                                string.find(lootName:lower(), "crab") or
-                                string.find(lootName:lower(), "mackeral") or
-                                string.find(lootName:lower(), "herring"))) then
-                
-                -- Add to fish tracker database
-                local currentZone = self.cache.lastZone or GetRealZoneText() or "Unknown"
-                self:AddFishToDatabase(lootName, lootQuantity, currentZone)
-                fishCaught = true
-            end
+    if #sorted > 0 then
+        table.sort(sorted, function(a, b) return a.count > b.count end)
+        print("Top catches in " .. currentZone .. ":")
+        for i = 1, math.min(3, #sorted) do
+            print(i .. ". " .. sorted[i].name .. ": " .. sorted[i].count)
         end
     end
-    
-    -- Track fishing end with success
-    if fishCaught and self.cache.isFishing then
-        self:TrackFishingEnd(true)
-    end
 end
-
--- Initialize the addon
-BB:Init()

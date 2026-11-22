@@ -1,208 +1,165 @@
 --[[
     BobberBuddy - Database Module
-    Handles all saved variables and persistent data storage
+    Saved variables and persistent data storage (per character)
 ]]
 
--- Check if addon is loaded and create local reference
 BobberBuddy = BobberBuddy or {}
 local BB = BobberBuddy
 
--- Default database structure
+-- Default per-character data
 local defaultDB = {
-    -- User settings
-    settings = {
-        enableAutoLure = true,
-        enableAutoBobberClick = true,
-        showTracker = true,
-        trackerPosition = {"RIGHT", UIParent, "RIGHT", -50, 0},
-    },
-    
-    -- Fish tracking data
+    settings = {}, -- filled from BB.defaults; missing keys fall back to defaults
     fishData = {
-        session = {},        -- Current session fish counts
-        lifetime = {},       -- All-time fish counts
-        zoneData = {},       -- Zone-specific fish data
-        lastCaught = {},     -- Last caught timestamp by fish
-        totalCaught = 0,     -- Total fish caught all-time
-        raresCaught = 0,     -- Number of rare fish caught
+        session = {},    -- Current session catch counts
+        lifetime = {},   -- All-time catch counts
+        zoneData = {},   -- zone -> { item -> count }
+        lastCaught = {}, -- item -> timestamp
+        firstCaught = {}, -- item -> timestamp of your first one
+        itemIDs = {},    -- item name -> itemID (for icons, tooltips and prices)
+        totalCaught = 0,
     },
-    
-    -- Statistics tracking
     stats = {
-        fishingCasts = 0,    -- Total number of fishing casts
-        timeSpentFishing = 0, -- Time spent fishing in seconds
-        luresUsed = 0,        -- Total lures used
-        sessionStartTime = 0, -- Current session start time
+        fishingCasts = 0,
+        timeSpentFishing = 0,
+        luresUsed = 0,
+        totalPlayTime = 0,
+        zoneTime = {},   -- zone -> seconds spent fishing there
     },
-    
-    -- Tracking per character
-    characters = {},         -- Character-specific data storage
+    savedGear = {}, -- slot -> item link you wore before fishing gear went on
+    normalWeapons = {}, -- [16]/[17] -> last non-pole weapons you wore (false = empty off-hand)
+    buffUsed = {},  -- itemID -> time you last used that fishing buff item
+    mutedSounds = {}, -- sound groups currently muted by us (so a reload can unmute them)
 }
 
--- Global cache for session data
+-- Session-only state
 BB.cache = {
-    fishCaught = {},         -- Fish caught this session
-    sessionStartTime = 0,     -- When session started
-    isFishing = false,        -- Currently fishing or not
-    fishingStart = 0,         -- When current cast started
-    fishingPoleEquipped = false, -- Is fishing pole equipped
-    activeLure = nil,         -- Currently active lure data
-    lastZone = nil,           -- Last zone where fishing occurred
+    fishCaught = {},
+    sessionStartTime = 0,
+    isFishing = false,
+    fishingStart = 0,
+    lastZone = nil,
 }
 
--- Initialize database
-function BB:InitDatabase()
-    -- Create saved variables if they don't exist
-    if not BobberBuddyDB then
-        BobberBuddyDB = {}
-    end
-    
-    -- Create master table if it doesn't exist
-    if not BobberBuddyDB.global then
-        BobberBuddyDB.global = {}
-    end
-    
-    -- Create character-specific table if it doesn't exist
-    local playerName = UnitName("player")
-    local realmName = GetRealmName()
-    local fullName = playerName .. "-" .. realmName
-    
-    if not BobberBuddyDB.characters then
-        BobberBuddyDB.characters = {}
-    end
-    
-    if not BobberBuddyDB.characters[fullName] then
-        BobberBuddyDB.characters[fullName] = {}
-    end
-    
-    -- Initialize with default values for missing entries
-    for category, defaults in pairs(defaultDB) do
-        if type(defaults) == "table" then
-            -- Initialize global settings
-            if not BobberBuddyDB.global[category] then
-                BobberBuddyDB.global[category] = {}
-            end
-            
-            -- Add missing values with defaults
-            for key, value in pairs(defaults) do
-                if BobberBuddyDB.global[category][key] == nil then
-                    BobberBuddyDB.global[category][key] = value
-                end
-            end
-            
-            -- Initialize character settings
-            if not BobberBuddyDB.characters[fullName][category] then
-                BobberBuddyDB.characters[fullName][category] = {}
-            end
-            
-            -- Add missing values with defaults for character
-            for key, value in pairs(defaults) do
-                if BobberBuddyDB.characters[fullName][category][key] == nil then
-                    BobberBuddyDB.characters[fullName][category][key] = value
-                end
-            end
+-- Copy defaults into target without overwriting existing values.
+-- Tables are copied, never shared, so characters can't alias each other's data.
+local function ApplyDefaults(target, defaults)
+    for key, value in pairs(defaults) do
+        if type(value) == "table" then
+            if type(target[key]) ~= "table" then target[key] = {} end
+            ApplyDefaults(target[key], value)
+        elseif target[key] == nil then
+            target[key] = value
         end
     end
-    
-    -- Store reference to character-specific data
-    self.db = BobberBuddyDB.characters[fullName]
-    self.globalDB = BobberBuddyDB.global
-    
-    -- Initialize cache for this session
+end
+
+function BB:InitDatabase()
+    BobberBuddyDB = BobberBuddyDB or {}
+    BobberBuddyDB.characters = BobberBuddyDB.characters or {}
+    BobberBuddyDB.global = nil -- v1 wrote defaults here but never read them
+
+    local fullName = UnitName("player") .. "-" .. GetRealmName()
+    BobberBuddyDB.characters[fullName] = BobberBuddyDB.characters[fullName] or {}
+    local db = BobberBuddyDB.characters[fullName]
+    ApplyDefaults(db, defaultDB)
+
+    -- v1 migrations
+    local pos = db.settings.trackerPosition
+    if type(pos) == "table" and #pos == 5 then
+        -- v1 saved {point, <frame>, relativePoint, x, y}; frames can't be saved
+        db.settings.trackerPosition = { pos[1], pos[3], pos[4], pos[5] }
+    end
+    if db.settings.enableAutoBobberClick ~= nil then
+        db.settings.oneKeyReel = db.settings.enableAutoBobberClick
+        db.settings.enableAutoBobberClick = nil
+    end
+    db.stats.sessionStartTime = nil
+
+    self.db = db
+
+    -- Session data starts fresh each login
+    db.fishData.session = {}
+    self.cache.fishCaught = db.fishData.session
     self.cache.sessionStartTime = time()
-    self.db.stats.sessionStartTime = self.cache.sessionStartTime
-    
-    -- Return database for other modules
-    return self.db
+
+    return db
 end
 
--- Get a setting value (prioritize character setting, fall back to global)
 function BB:GetSetting(key)
-    if self.db and self.db.settings and self.db.settings[key] ~= nil then
-        return self.db.settings[key]
-    elseif self.globalDB and self.globalDB.settings and self.globalDB.settings[key] ~= nil then
-        return self.globalDB.settings[key]
-    else
-        return defaultDB.settings[key] -- Fall back to default
+    local value = self.db and self.db.settings[key]
+    if value == nil then
+        return self.defaults[key]
     end
+    return value
 end
 
--- Set a setting value
-function BB:SetSetting(key, value, isGlobal)
-    if isGlobal then
-        self.globalDB.settings[key] = value
-    else
-        self.db.settings[key] = value
-    end
+function BB:SetSetting(key, value)
+    self.db.settings[key] = value
 end
 
--- Add a fish to tracking
-function BB:AddFishToDatabase(fishName, quantity, zone)
+-- Record a catch
+function BB:AddFishToDatabase(fishName, quantity, zone, itemID)
     quantity = quantity or 1
     zone = zone or GetRealZoneText() or "Unknown"
-    
-    -- Update session cache
-    if not self.cache.fishCaught[fishName] then
-        self.cache.fishCaught[fishName] = 0
-    end
-    self.cache.fishCaught[fishName] = self.cache.fishCaught[fishName] + quantity
-    
-    -- Update lifetime data
-    if not self.db.fishData.lifetime[fishName] then
-        self.db.fishData.lifetime[fishName] = 0
-    end
-    self.db.fishData.lifetime[fishName] = self.db.fishData.lifetime[fishName] + quantity
-    
-    -- Update zone data
-    if not self.db.fishData.zoneData[zone] then
-        self.db.fishData.zoneData[zone] = {}
-    end
-    if not self.db.fishData.zoneData[zone][fishName] then
-        self.db.fishData.zoneData[zone][fishName] = 0
-    end
-    self.db.fishData.zoneData[zone][fishName] = self.db.fishData.zoneData[zone][fishName] + quantity
-    
-    -- Update session data
-    if not self.db.fishData.session[fishName] then
-        self.db.fishData.session[fishName] = 0
-    end
-    self.db.fishData.session[fishName] = self.db.fishData.session[fishName] + quantity
-    
-    -- Update last caught time
-    self.db.fishData.lastCaught[fishName] = time()
-    
-    -- Update total counts
-    self.db.fishData.totalCaught = self.db.fishData.totalCaught + quantity
-    
-    -- Trigger UI update
+    local data = self.db.fishData
+    if itemID then data.itemIDs[fishName] = itemID end
+
+    data.session[fishName] = (data.session[fishName] or 0) + quantity
+    data.lifetime[fishName] = (data.lifetime[fishName] or 0) + quantity
+
+    data.zoneData[zone] = data.zoneData[zone] or {}
+    data.zoneData[zone][fishName] = (data.zoneData[zone][fishName] or 0) + quantity
+
+    data.lastCaught[fishName] = time()
+    data.firstCaught[fishName] = data.firstCaught[fishName] or time()
+    if self.UpdateFishingLog then self:UpdateFishingLog() end
+    data.totalCaught = data.totalCaught + quantity
+
     self:UpdateFishTrackerUI()
-    
-    return true
 end
 
--- Clear session fish data
+-- Coins looted while fishing (counted toward session value)
+function BB:AddFishingMoney(copper)
+    self.cache.sessionMoney = (self.cache.sessionMoney or 0) + copper
+    self:UpdateFishTrackerUI()
+end
+
 function BB:ClearSessionData()
-    self.cache.fishCaught = {}
-    self.db.fishData.session = {}
+    wipe(self.db.fishData.session)
+    self.cache.sessionMoney = 0
+    self.cache.sessionFirstCast = nil
     self.cache.sessionStartTime = time()
-    self.db.stats.sessionStartTime = self.cache.sessionStartTime
     self:UpdateFishTrackerUI()
 end
 
--- Clear all fish tracking data
 function BB:ClearAllData()
-    self.db.fishData = table.wipe(self.db.fishData)
-    self.cache.fishCaught = {}
-    
-    -- Re-initialize empty data structure
-    for key, value in pairs(defaultDB.fishData) do
-        self.db.fishData[key] = type(value) == "table" and {} or value
+    local data = self.db.fishData
+    wipe(data.session)
+    wipe(data.lifetime)
+    wipe(data.zoneData)
+    wipe(data.lastCaught)
+    wipe(data.firstCaught)
+    data.totalCaught = 0
+    self.cache.sessionMoney = 0
+    self.cache.sessionFirstCast = nil
+
+    -- Casts, fishing time and lures used too
+    local stats = self.db.stats
+    stats.fishingCasts = 0
+    stats.timeSpentFishing = 0
+    stats.luresUsed = 0
+    wipe(stats.zoneTime)
+    if self.cache.isFishing then
+        self.cache.fishingStart = time() -- don't re-add the part of this cast before the reset
     end
-    
+
     self:UpdateFishTrackerUI()
+    if self.optionsPanel and self.optionsPanel:IsShown() then
+        self.optionsPanel:GetScript("OnShow")(self.optionsPanel)
+    end
+    print("|cFF80FF80Bobber Buddy|r: All fishing data has been reset.")
 end
 
--- Get total fish caught in current session
 function BB:GetSessionTotal()
     local total = 0
     for _, count in pairs(self.cache.fishCaught) do
@@ -211,60 +168,55 @@ function BB:GetSessionTotal()
     return total
 end
 
--- Get total fish caught all-time
 function BB:GetLifetimeTotal()
     return self.db.fishData.totalCaught or 0
 end
 
--- Get fish data for a specific zone
 function BB:GetZoneFishData(zone)
     zone = zone or GetRealZoneText() or "Unknown"
     return self.db.fishData.zoneData[zone] or {}
 end
 
--- Get session fish data as a sorted array for display
 function BB:GetSortedSessionFish()
-    local fishData = {}
-    
-    -- Convert hash table to sortable array
+    local list = {}
     for fish, count in pairs(self.cache.fishCaught) do
-        table.insert(fishData, {name = fish, count = count})
+        table.insert(list, { name = fish, count = count })
     end
-    
-    -- Sort by count (descending)
-    table.sort(fishData, function(a, b) return a.count > b.count end)
-    
-    return fishData
+    table.sort(list, function(a, b) return a.count > b.count end)
+    return list
 end
 
--- Track stats about fishing
+-- Stats
 function BB:TrackFishingCast()
     self.db.stats.fishingCasts = self.db.stats.fishingCasts + 1
-    
-    -- Ensure cache exists
-    if not self.cache then
-        self.cache = {}
-    end
-    
     self.cache.fishingStart = time()
     self.cache.isFishing = true
+    self.cache.sessionFirstCast = self.cache.sessionFirstCast or time() -- gold/hour clock
+    self:UpdateFishTrackerUI()
 end
 
--- Track stats about lure usage
-function BB:TrackLureUsage(lureID)
+-- Saved fishing time plus the cast in progress
+function BB:GetTimeSpentFishing()
+    local total = self.db.stats.timeSpentFishing or 0
+    if self.cache.isFishing and self.cache.fishingStart > 0 then
+        total = total + (time() - self.cache.fishingStart)
+    end
+    return total
+end
+
+function BB:TrackLureUsage()
     self.db.stats.luresUsed = self.db.stats.luresUsed + 1
 end
 
--- Track end of fishing
-function BB:TrackFishingEnd(success)
-    -- Ensure cache exists
-    if not self.cache then
-        self.cache = {}
-    end
-    
-    if self.cache.isFishing and self.cache.fishingStart and self.cache.fishingStart > 0 then
+function BB:TrackFishingEnd()
+    if self.cache.isFishing and self.cache.fishingStart > 0 then
         local duration = time() - self.cache.fishingStart
-        self.db.stats.timeSpentFishing = self.db.stats.timeSpentFishing + duration
-        self.cache.isFishing = false
+        local stats = self.db.stats
+        stats.timeSpentFishing = stats.timeSpentFishing + duration
+        local zone = self.cache.lastZone or GetRealZoneText() or "Unknown"
+        stats.zoneTime[zone] = (stats.zoneTime[zone] or 0) + duration
     end
+    self.cache.isFishing = false
+    self:UpdateFishTrackerUI()
+    if self.UpdateFishingLog then self:UpdateFishingLog() end
 end
