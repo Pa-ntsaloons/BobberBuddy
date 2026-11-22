@@ -9,8 +9,14 @@
 - The next skill-up estimate counts catches instead of casts, since only catches earn skill, with fishing time shown beside it (~7 catches (~2m)). It shows time only until you've had two skill-ups with the new count.
 - The estimate uses your typical skill-up rather than the average, so one long dry spell no longer pushes it way up.
 
+### Tracker
+- New gear button: "Fishing Gear" puts on your best pole and any fishing gear in your bags; once the pole is on it becomes "Normal Gear" and swaps you back.
+- The Fishing Log is now a book button at the top-left of the tracker's title bar.
+
 ### Fixes
 - Resetting all data also clears the saved skill-ups, so the estimate starts fresh instead of going wrong.
+- Swapping back to normal gear while fishing or casting no longer says it worked when it didn't. Chat now tells you to wait until your bobber is gone.
+- Chat only says you swapped back once the gear is really on. If something didn't go back on, chat says so and the next try puts it back (before, a failed swap forgot your normal gear).
 
 ## 1.0.2 — 2026-11-22
 

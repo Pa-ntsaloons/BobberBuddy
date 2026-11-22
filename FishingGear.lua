@@ -157,7 +157,8 @@ end
 
 -- Builds a macro that equips everything better than what's worn, or nil if nothing to do.
 -- Also returns { {slot, id}, ... } so the swap can be checked afterwards.
-function BB:BuildGearMacro()
+-- includeGear: put on clothes/rings/trinkets even if the setting is off (the tracker's gear button)
+function BB:BuildGearMacro(includeGear)
     local lines, attempts = {}, {}
 
     -- Pole (always, so you can cast at all)
@@ -178,7 +179,7 @@ function BB:BuildGearMacro()
     end
 
     -- Clothes, rings, trinkets
-    if self:GetSetting("enableFishingGear") then
+    if includeGear or self:GetSetting("enableFishingGear") then
         local candidates = {} -- equipLoc -> { {id, bonus}, ... }
         self.ForEachBagItem(function(itemID)
             local _, _, _, equipLoc = C.GetItemInfoInstant(itemID)
@@ -218,13 +219,29 @@ function BB:BuildGearMacro()
     if #lines > 0 then return table.concat(lines, "\n"), attempts end
 end
 
-function BB:RestoreGear()
+-- Gear can't change in combat or while a cast or fishing channel is going
+function BB:CanSwapGear()
     if InCombatLockdown() then
         print("|cFF80FF80Bobber Buddy|r: Can't change gear in combat.")
-        return
+        return false
     end
+    if UnitChannelInfo("player") or UnitCastingInfo("player") then
+        print("|cFF80FF80Bobber Buddy|r: Can't change gear while you're fishing or casting. Try again once your bobber is gone.")
+        return false
+    end
+    return true
+end
+
+local function ItemIDOf(item)
+    if type(item) == "number" then return item end
+    return item and (tonumber(item:match("item:(%d+)")) or C.GetItemInfoInstant(item))
+end
+
+function BB:RestoreGear()
+    if not self:CanSwapGear() then return end
     local saved = self.db.savedGear
     local swapped = false
+    local expected = {} -- slot -> item we asked for, checked a moment later
 
     -- Weapons: if a pole is in your hands, put your weapons back. Use what we saved
     -- when the pole went on, or else the last weapons we saw you wearing.
@@ -238,6 +255,7 @@ function BB:RestoreGear()
             C.EquipItemByName(mainhand, MAINHAND)
             if offhand then C.EquipItemByName(offhand, OFFHAND) end
             swapped = true
+            expected[MAINHAND] = mainhand
         end
     end
 
@@ -249,16 +267,37 @@ function BB:RestoreGear()
             if current == nil or self:IsFishingGear(current) then
                 C.EquipItemByName(item, slot)
                 swapped = true
+                expected[slot] = item
+            else
+                saved[slot] = nil -- you've put something else on there yourself; leave it
             end
         end
     end
-    wipe(saved)
 
-    if swapped then
-        print("|cFF80FF80Bobber Buddy|r: Swapped back to your normal gear.")
-    else
+    if not swapped then
         print("|cFF80FF80Bobber Buddy|r: Nothing to swap back.")
+        return
     end
+
+    -- Only say it worked once the items are really on; keep anything that didn't go on saved
+    -- so the next try puts it back
+    C_Timer.After(1, function()
+        local failed = 0
+        for slot, item in pairs(expected) do
+            if GetInventoryItemID("player", slot) == ItemIDOf(item) then
+                if saved[slot] == item then saved[slot] = nil end
+                if slot == MAINHAND then saved[OFFHAND] = nil end
+            else
+                failed = failed + 1
+            end
+        end
+        if failed == 0 then
+            print("|cFF80FF80Bobber Buddy|r: Swapped back to your normal gear.")
+        else
+            print("|cFF80FF80Bobber Buddy|r: |cFFFF4040Couldn't swap " .. failed .. " item(s) back.|r Try again in a moment.")
+        end
+        if BB.UpdateGearButton then BB:UpdateGearButton() end
+    end)
 end
 
 -- Remember your real weapons whenever they change, so we can always put them back

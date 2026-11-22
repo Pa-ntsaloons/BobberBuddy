@@ -122,6 +122,15 @@ function BB:CreateTrackerFrame()
     end
     title:SetText("Bobber Buddy")
 
+    -- Fishing log: a small book button at the left of the title bar
+    local logButton = CreateFrame("Button", nil, frame)
+    logButton:SetSize(16, 16)
+    logButton:SetPoint("TOPLEFT", 6, -3)
+    logButton:SetNormalTexture("Interface\\Icons\\INV_Misc_Book_09")
+    logButton:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+    logButton:SetScript("OnClick", function() BB:ToggleFishingLog() end)
+    Tooltip(logButton, "Fishing Log", "Every catch you've ever made, where, and your time spent fishing.")
+
     -- Everything else sits in this area: below the title bar, above the buttons. We lay out
     -- against our own frame because the template's inset is named differently between clients.
     local inset = CreateFrame("Frame", nil, frame)
@@ -229,17 +238,19 @@ function BB:CreateTrackerFrame()
     ui.moreText = moreText
 
     -- Buttons along the bottom, below the inset
-    local third = (WIDTH - 20 - 8) / 3
+    -- The middle button gets the extra room: "Fishing Gear" / "Normal Gear" are the longest labels
+    local sideWidth = 66
+    local third = WIDTH - 20 - 8 - 2 * sideWidth
     local clear = PanelButton(frame, "Clear", function() BB:ClearSessionData() end)
-    clear:SetWidth(third)
+    clear:SetWidth(sideWidth)
     clear:SetPoint("BOTTOMLEFT", 10, 8)
     Tooltip(clear, "Clear session", "Clears this session's list and value. Your lifetime log is kept.")
-    local log = PanelButton(frame, "Log", function() BB:ToggleFishingLog() end)
-    log:SetWidth(third)
-    log:SetPoint("LEFT", clear, "RIGHT", 4, 0)
+    local gear = self:CreateGearButton(frame)
+    gear:SetWidth(third)
+    gear:SetPoint("LEFT", clear, "RIGHT", 4, 0)
     local settings = PanelButton(frame, "Settings", function() BB:OpenSettings() end)
-    settings:SetWidth(third)
-    settings:SetPoint("LEFT", log, "RIGHT", 4, 0)
+    settings:SetWidth(sideWidth)
+    settings:SetPoint("LEFT", gear, "RIGHT", 4, 0)
 
     -- Scrollable list (mouse wheel)
     local scroll = CreateFrame("ScrollFrame", nil, frame)
@@ -297,6 +308,7 @@ function BB:UpdateStatsLine()
     if not ui or not ui.cells then return end
     local cells = ui.cells
 
+    self:UpdateGearButton()
     cells.catches.value:SetText(self:GetSessionTotal())
     cells.total.value:SetText(self:GetLifetimeTotal())
     cells.casts.value:SetText(self.db.stats.fishingCasts or 0)
@@ -345,6 +357,47 @@ function BB:UpdateStatsLine()
         ui.skillBar:SetValue(0)
         ui.nextSkillText:SetText("|cFFA0A0A0Cast once to read your skill|r")
     end
+end
+
+-- Gear button: puts on your fishing gear, or swaps back to your normal gear once the pole is on
+function BB:CreateGearButton(parent)
+    local button = PanelButton(parent, "Fishing Gear", function() BB:ToggleFishingGear() end)
+    button:SetScript("OnEnter", function(b)
+        GameTooltip:SetOwner(b, "ANCHOR_TOP")
+        if BB:IsFishingPoleEquipped() then
+            GameTooltip:AddLine("Normal Gear")
+            GameTooltip:AddLine("Swap back to the weapons and gear you wore before fishing.", 1, 1, 1, true)
+        else
+            GameTooltip:AddLine("Fishing Gear")
+            GameTooltip:AddLine("Put on your best fishing pole and any fishing gear in your bags.", 1, 1, 1, true)
+        end
+        GameTooltip:Show()
+    end)
+    button:SetScript("OnLeave", GameTooltip_Hide)
+    self.ui.gearButton = button
+    return button
+end
+
+function BB:UpdateGearButton()
+    local button = self.ui and self.ui.gearButton
+    if button then button:SetText(self:IsFishingPoleEquipped() and "Normal Gear" or "Fishing Gear") end
+end
+
+function BB:ToggleFishingGear()
+    if not self:CanSwapGear() then return end
+    if self:IsFishingPoleEquipped() then
+        self:RestoreGear()
+    else
+        local _, attempts = self:BuildGearMacro(true)
+        if not attempts then
+            print("|cFF80FF80Bobber Buddy|r: No fishing pole or fishing gear in your bags.")
+            return
+        end
+        for _, attempt in ipairs(attempts) do
+            BB.compat.EquipItemByName(attempt.id, attempt.slot)
+        end
+    end
+    C_Timer.After(0.5, function() BB:UpdateGearButton() end)
 end
 
 -- Hover on the skill bar: base skill, what each item, lure and buff adds, and the totals
