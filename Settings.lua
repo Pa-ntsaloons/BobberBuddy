@@ -277,8 +277,9 @@ function BB:InitSettings()
         CreateCheckbox(panel, "Show fish tracker window",
             "Shows the window listing what you've caught this session.",
             "showTracker", function() BB:UpdateTrackerVisibility() end),
-        CreateCheckbox(panel, "Show tracker when you equip a fishing pole",
-            "Opens the fish tracker window whenever a fishing pole goes into your hands - by you, or by the fishing key.",
+        CreateCheckbox(panel, "Show tracker when you equip a pole or cast",
+            "Opens the fish tracker window when a fishing pole goes into your hands, and when you start a cast " ..
+            "(so it also appears if the pole was already equipped).",
             "showTrackerWithPole"),
         CreateCheckbox(panel, "Close tracker when you unequip the fishing pole",
             "Closes the fish tracker window when the pole leaves your hands - by swapping back to your weapons or unequipping it.",

@@ -59,9 +59,28 @@ function BB:InitDatabase()
     BobberBuddyDB.global = nil -- v1 wrote defaults here but never read them
 
     local fullName = UnitName("player") .. "-" .. GetRealmName()
+    local existingCharacter = BobberBuddyDB.characters[fullName] ~= nil
     BobberBuddyDB.characters[fullName] = BobberBuddyDB.characters[fullName] or {}
     local db = BobberBuddyDB.characters[fullName]
     ApplyDefaults(db, defaultDB)
+
+    -- 1.0.1 made most features off by default. Characters that used Bobber Buddy before then
+    -- keep 1.0.0's defaults for anything they never changed, so an update doesn't quietly turn
+    -- their features off. Settings a player chose are never touched.
+    if not db.settingsVersion then
+        if existingCharacter then
+            local OLD_DEFAULTS = {
+                enableAutoLure = true, enableFishingGear = true, enableBuffItems = true,
+                oneKeyReel = true, fishingSound = true, fishingVolumeBoost = 200,
+                muteCrafting = true, showTracker = true, showTrackerWithPole = true,
+                hideTrackerWithoutPole = true,
+            }
+            for key, value in pairs(OLD_DEFAULTS) do
+                if db.settings[key] == nil then db.settings[key] = value end
+            end
+        end
+        db.settingsVersion = 2
+    end
 
     -- v1 migrations
     local pos = db.settings.trackerPosition

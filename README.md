@@ -23,7 +23,9 @@ Built for **WoW Forever**, and it also works on Retail.
 
 ## Usage
 
-Set your fishing key in **Options > AddOns > Bobber Buddy** (or **Key Bindings > Bobber Buddy**), stand by water and press it. Keep pressing it: it gears up, eats, applies a lure, casts, and reels in when the bobber splashes.
+Open **Options > AddOns > Bobber Buddy**, set your fishing key, and tick the features you want. Everything except the minimap button starts **off**, so nothing changes until you choose it: lures, fishing gear, buff food, one-key reel in, the bobber sound options and the tracker.
+
+Then stand by water and press your key. Each press does the next thing you've turned on (gear, food, lure), then casts; with one-key reel in on, press it again when the bobber splashes.
 
 ### Slash commands
 
@@ -32,6 +34,7 @@ Set your fishing key in **Options > AddOns > Bobber Buddy** (or **Key Bindings >
 | `/bb` | Show help |
 | `/bb config` | Open the options |
 | `/bb log` | Open your fishing log |
+| `/bb lure` | Show your lure status (handy if lures aren't going on) |
 | `/bb gear` | Swap back to your normal gear |
 | `/bb toggle` | Show or hide the session tracker |
 | `/bb stats` | Print your fishing statistics |

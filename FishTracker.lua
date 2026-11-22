@@ -55,6 +55,11 @@ function BB:InitFishTracker()
                 BB:TrackFishingCast()
                 BB:StartReelMode()
                 BB:StartFishingSound()
+                -- Pole was already in your hands (so no equip happened)? Open the tracker on the cast
+                if BB:GetSetting("showTrackerWithPole") and not BB:GetSetting("showTracker") then
+                    BB:SetSetting("showTracker", true)
+                    BB:UpdateTrackerVisibility()
+                end
             end
         elseif event == "UNIT_SPELLCAST_CHANNEL_STOP" then
             local _, _, spellID = ...
@@ -67,6 +72,7 @@ function BB:InitFishTracker()
         elseif event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_INTERRUPTED" then
             local _, _, spellID = ...
             BB:OnSpellFailed(spellID)
+            BB:OnLureCastStopped(spellID, event == "UNIT_SPELLCAST_INTERRUPTED")
         elseif event == "PLAYER_REGEN_DISABLED" then
             BB:RestoreSound() -- you'll want to hear the fight
         elseif event == "LOOT_OPENED" then

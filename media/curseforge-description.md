@@ -25,8 +25,9 @@ If you use **Auctionator**, session value and gold per hour use its auction pric
 ## How to use
 
 1. Open **Options > AddOns > Bobber Buddy** and set your fishing key (or use **Key Bindings > Bobber Buddy**).
-2. Stand by water and press the key. Keep pressing it: it gears up, eats, applies a lure and casts.
-3. When the bobber splashes, press the key again to reel in.
+2. Tick the features you want. Everything except the minimap button starts **off**, so Bobber Buddy only does what you choose.
+3. Stand by water and press the key. Each press does the next thing you've turned on (gear, food, lure), then casts.
+4. With **One-key reel in** on, press the key again when the bobber splashes to reel in.
 
 ## Slash commands
 
@@ -34,6 +35,7 @@ If you use **Auctionator**, session value and gold per hour use its auction pric
 |---|---|
 | `/bb config` | Open the options |
 | `/bb log` | Open your fishing log |
+| `/bb lure` | Show your lure status (handy if lures aren't going on) |
 | `/bb gear` | Swap back to your normal gear |
 | `/bb toggle` | Show or hide the session tracker |
 | `/bb stats` | Print your fishing statistics |

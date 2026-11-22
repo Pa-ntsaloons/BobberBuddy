@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.1 — 2026-11-22
+
+### Lures
+- Lures are no longer quietly skipped for the rest of the session. If applying a lure gets interrupted (moving, jumping), the next press just tries again.
+- A lure that fails to go on twice in a row is rested for 2 minutes, then tried again, and chat says so.
+- Lures are found in every bag, including the extra bag slot.
+- A lure with under 10 seconds left is replaced before you cast.
+- New `/bb lure` command shows whether your pole has a lure, how long is left, and the status of every lure in your bags.
+
+### Tracker
+- The tracker now opens when you cast, not only when you equip a pole, so it appears even if your pole was already on.
+
+### Defaults
+- New installs and new characters start with every feature off except the minimap button, so Bobber Buddy only does what you turn on.
+- Characters that already used 1.0.0 keep their current behaviour, and settings you've chosen are never changed.
+
 ## 1.0.0 — 2026-11-21
 
 First release, built for WoW Forever.

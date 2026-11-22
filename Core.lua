@@ -78,20 +78,20 @@ BB.LURES = {
 
 -- Default settings
 BB.defaults = {
-    enableAutoLure = true,
-    enableFishingGear = true,
-    enableBuffItems = true,
-    oneKeyReel = true,
-    fishingSound = true,
-    fishingVolumeBoost = 200, -- fishing volume in % of your normal master volume (100 = unchanged)
+    enableAutoLure = false,
+    enableFishingGear = false,
+    enableBuffItems = false,
+    oneKeyReel = false,
+    fishingSound = false,
+    fishingVolumeBoost = 100, -- fishing volume in % of your normal master volume (100 = unchanged)
     soundRestoreDelay = 15, -- seconds after the last cast before sounds come back
-    muteCrafting = true,
+    muteCrafting = false,
     muteSpells = false,
     muteFootsteps = false,
     muteVoices = false,
-    showTracker = true,
-    showTrackerWithPole = true,
-    hideTrackerWithoutPole = true,
+    showTracker = false,
+    showTrackerWithPole = false,
+    hideTrackerWithoutPole = false,
     showMinimapButton = true,
 }
 
@@ -182,8 +182,10 @@ function BB:IsFishingPoleEquipped()
 end
 
 -- Calls fn(itemID) for every item in the backpack and equipped bags
+local LAST_BAG = NUM_TOTAL_EQUIPPED_BAG_SLOTS or ((NUM_BAG_SLOTS or 4) + (NUM_REAGENTBAG_SLOTS or 0))
 local function ForEachBagItem(fn)
-    for bag = 0, NUM_BAG_SLOTS or 4 do
+    -- Backpack, the four bag slots, and the extra (reagent) bag slot the modern client has
+    for bag = 0, LAST_BAG do
         for slot = 1, C.GetContainerNumSlots(bag) or 0 do
             local itemID = C.GetContainerItemID(bag, slot)
             if itemID then fn(itemID) end
@@ -193,9 +195,72 @@ end
 BB.ForEachBagItem = ForEachBagItem
 
 -- Lures in Classic-style fishing are temporary main-hand enchants
+-- A lure with under 10 seconds left counts as gone, so a fresh one goes on before the cast
 function BB:HasActiveLure()
-    local hasMainHandEnchant = GetWeaponEnchantInfo()
-    return hasMainHandEnchant and true or false
+    local hasMainHandEnchant, expirationMS = GetWeaponEnchantInfo()
+    if not hasMainHandEnchant then return false end
+    if expirationMS and not C.IsSecret(expirationMS) and expirationMS < 10000 then return false end
+    return true
+end
+
+-- Lures that failed to go on twice in a row rest for 2 minutes (not the whole session)
+local LURE_REST = 120
+function BB:IsLureResting(itemID)
+    local untilTime = self.lureRestUntil and self.lureRestUntil[itemID]
+    return untilTime ~= nil and GetTime() < untilTime
+end
+
+-- The last lure press didn't result in a lure on the pole
+function BB:CountLureMiss(lure)
+    self.lureMisses = self.lureMisses or {}
+    self.lureRestUntil = self.lureRestUntil or {}
+    self.lureMisses[lure] = (self.lureMisses[lure] or 0) + 1
+    if self.lureMisses[lure] >= 2 then
+        self.lureMisses[lure] = 0
+        self.lureRestUntil[lure] = GetTime() + LURE_REST
+        local link = select(2, C.GetItemInfo(lure)) or "your lure"
+        print("|cFF80FF80Bobber Buddy|r: " .. link .. " didn't go on twice in a row, so I'm fishing without it " ..
+            "for 2 minutes, then trying again. Type /bb lure to see what's going on.")
+    end
+end
+
+-- Lure application stopped: interrupted (moved, jumped) isn't the lure's fault - just retry
+function BB:OnLureCastStopped(spellID, interrupted)
+    local pending = self.pendingLure
+    if not pending or not pending.spellID or spellID ~= pending.spellID then return end
+    self.pendingLure = nil
+    if not interrupted then self:CountLureMiss(pending.id) end
+end
+
+-- /bb lure: what the addon sees, for working out lure problems
+function BB:PrintLureStatus()
+    local hasEnchant, expirationMS = GetWeaponEnchantInfo()
+    print("|cFF80FF80Bobber Buddy lures:|r")
+    print("  Fishing pole equipped: " .. (self:IsFishingPoleEquipped() and "yes" or "|cFFFF4040no|r"))
+    if hasEnchant then
+        local left = expirationMS and not C.IsSecret(expirationMS) and SecondsToTime(math.floor(expirationMS / 1000)) or "?"
+        print("  Lure on your pole: yes (" .. left .. " left)")
+    else
+        print("  Lure on your pole: |cFFFF4040none|r")
+    end
+    print("  Auto-apply lures: " .. (self:GetSetting("enableAutoLure") and "on" or "|cFFFF4040off|r (Bobber Buddy settings)"))
+    local found = false
+    ForEachBagItem(function(itemID)
+        if self.LURES[itemID] then
+            found = true
+            local link = select(2, C.GetItemInfo(itemID)) or ("item " .. itemID)
+            local status = "|cFF40FF40will use|r"
+            if self.failedLures[itemID] then
+                status = "|cFFFF4040skipped this session (the game said it can't be used)|r"
+            elseif self:IsLureResting(itemID) then
+                status = "|cFFFF8040resting " .. math.ceil(self.lureRestUntil[itemID] - GetTime()) .. "s after failing twice|r"
+            elseif not self:CanUseItem(itemID) then
+                status = "|cFFFF4040can't use yet (level or skill)|r"
+            end
+            print("  " .. link .. " (+" .. self.LURES[itemID] .. "): " .. status)
+        end
+    end)
+    if not found then print("  No lures found in your bags.") end
 end
 
 -- Can you use this item right now? (level/skill requirements - what greys out action bar items)
@@ -246,7 +311,16 @@ function BB:OnUIError(message)
     if message and not C.IsSecret(message) and (message == ERR_CANT_USE_ITEM or message == ERR_ITEM_CANNOT_BE_USED
         or message == SPELL_FAILED_LOW_CASTLEVEL or message == ERR_USE_LOCKED_WITH_ITEM_S
         or message:lower():find("can't use", 1, true)) then
-        self:SkipItem(attempt.id, "the game says it can't be used yet")
+        if self.LURES[attempt.id] then
+            -- Lures rest for 2 minutes instead of a whole session, in case the error was a fluke
+            self.lureRestUntil = self.lureRestUntil or {}
+            self.lureRestUntil[attempt.id] = GetTime() + LURE_REST
+            local link = select(2, C.GetItemInfo(attempt.id)) or "your lure"
+            print("|cFF80FF80Bobber Buddy|r: The game says " .. link .. " can't be used (\"" .. message ..
+                "\"). Fishing without it for 2 minutes. Type /bb lure for details.")
+        else
+            self:SkipItem(attempt.id, "the game says it can't be used yet")
+        end
         self.db.buffUsed[attempt.id] = nil
         self.pendingLure, self.pendingBuff, self.lastItemAttempt = nil, nil, nil
     end
@@ -256,7 +330,7 @@ function BB:FindBestLure()
     local bestID, bestBonus = nil, 0
     ForEachBagItem(function(itemID)
         local bonus = self.LURES[itemID]
-        if bonus and bonus > bestBonus and self:CanUseItem(itemID) then
+        if bonus and bonus > bestBonus and self:CanUseItem(itemID) and not self:IsLureResting(itemID) then
             bestID, bestBonus = itemID, bonus
         end
     end)
@@ -318,17 +392,20 @@ function BB:PrepareButton(button, down)
 
     if self:IsFishingPoleEquipped() and self:GetSetting("enableAutoLure") then
         if self:HasActiveLure() then
+            if self.pendingLure and self.lureMisses then self.lureMisses[self.pendingLure.id] = 0 end
             self.pendingLure = nil
         else
-            -- Last press tried a lure and it didn't stick (e.g. skill too low): skip that lure
+            -- Last press tried a lure, the cast wasn't interrupted, and still no lure: count a miss
+            -- (two in a row rests that lure for 2 minutes - see CountLureMiss)
             if self.pendingLure and GetTime() - self.pendingLure.time < 30 then
-                self.failedLures[self.pendingLure.id] = true
+                self:CountLureMiss(self.pendingLure.id)
             end
             self.pendingLure = nil
 
             local lure = self:FindBestLure()
             if lure then
-                self.pendingLure = { id = lure, time = GetTime() }
+                local _, lureSpellID = C.GetItemSpell(lure)
+                self.pendingLure = { id = lure, time = GetTime(), spellID = lureSpellID }
                 self:NoteItemAttempt(lure)
                 SetMacro(button, "/use item:" .. lure .. "\n/use " .. (INVSLOT_MAINHAND or 16))
                 self:TrackLureUsage()
@@ -398,6 +475,7 @@ function BB:HandleSlashCommand(msg)
         print("  |cFFFFFF00/bb config|r - Open configuration panel")
         print("  |cFFFFFF00/bb stats|r - Show fishing statistics")
         print("  |cFFFFFF00/bb log|r - Open your lifetime fishing log")
+        print("  |cFFFFFF00/bb lure|r - Show what Bobber Buddy sees about your lures")
         print("  |cFFFFFF00/bb gear|r - Swap back to your normal gear")
         print("  |cFFFFFF00/bb minimap|r - Show/hide the minimap button")
         print("  |cFFFFFF00/bb clear|r - Clear session fish data")
@@ -415,6 +493,8 @@ function BB:HandleSlashCommand(msg)
         self:ShowFishingStats()
     elseif cmd == "gear" then
         self:RestoreGear()
+    elseif cmd == "lure" or cmd == "lures" then
+        self:PrintLureStatus()
     elseif cmd == "log" then
         self:ToggleFishingLog()
     elseif cmd == "minimap" then
