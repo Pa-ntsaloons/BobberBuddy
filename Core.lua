@@ -519,7 +519,7 @@ function BB:ShowFishingStats()
     print("Session catches: " .. self:GetSessionTotal())
     print("Lifetime catches: " .. self:GetLifetimeTotal())
     print("Total fishing casts: " .. (stats.fishingCasts or 0))
-    print("Time spent fishing: " .. SecondsToTime(self:GetTimeSpentFishing()))
+    print("Time spent fishing: " .. BB.FormatDuration(self:GetTimeSpentFishing()))
     print("Lures used: " .. (stats.luresUsed or 0))
     print("Current zone: " .. currentZone)
 

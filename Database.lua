@@ -29,6 +29,7 @@ local defaultDB = {
     normalWeapons = {}, -- [16]/[17] -> last non-pole weapons you wore (false = empty off-hand)
     buffUsed = {},  -- itemID -> time you last used that fishing buff item
     mutedSounds = {}, -- sound groups currently muted by us (so a reload can unmute them)
+    fishingSkill = { ups = {} }, -- rank, max, and recent skill-ups { time, casts } for the estimate
 }
 
 -- Session-only state

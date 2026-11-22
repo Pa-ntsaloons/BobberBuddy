@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.2 — 2026-11-22
+
+### Fishing skill
+- The tracker shows your Fishing skill on a skill bar (for example 89 / 150).
+- An estimate of your next skill-up, in fishing time and casts, based on how long your recent skill-ups took. It appears after your second skill-up and improves as you fish.
+- At your cap, it reminds you to train the next rank.
+
+### Tracker
+- Redesigned in the standard WoW window style: title bar, close button, gold labels with white values, and the usual red buttons.
+- Session stats in a tidy grid: catches, lifetime, casts, time, value and gold per hour.
+- The catch list scrolls with the mouse wheel and shows how many more there are below.
+- Times are shorter and easier to read (33m 45s instead of 33 Min 45 Sec), including in `/bb stats`.
+
 ## 1.0.1 — 2026-11-22
 
 ### Lures
