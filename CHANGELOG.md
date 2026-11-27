@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.4 — 2026-11-26
+
+### Fixes
+- Fixed a repeated "Auras cannot be accessed when secret" error. The game hides buff details from addons in combat (and some buffs always), and the skill breakdown tried to read them anyway. Fishing buffs gained or lost in combat now show once combat ends.
+
 ## 1.0.3 — 2026-11-22
 
 ### Fishing skill

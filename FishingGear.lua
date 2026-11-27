@@ -447,6 +447,40 @@ function BB:IdentifyLure(amount)
     end
 end
 
+-- Your buffs that add Fishing skill: { name, amount, icon }. The game hides buff details from
+-- addons in combat (and some buffs always), and reading them then is an error, so in combat - or
+-- if a read is refused - this keeps the last list it could read.
+local lastFishingBuffs = {}
+local function ReadFishingBuffs(fishing)
+    local buffs = {}
+    for i = 1, 40 do
+        local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+        if not aura then break end
+        if aura.name and not C.IsSecret(aura.name) then
+            local lines = GetAuraLines(i, aura)
+            for j = 2, #lines do
+                local lower = lines[j]:lower()
+                local pos = lower:find(fishing, 1, true)
+                local amount = pos and FishingAmount(lower, pos)
+                if amount then
+                    buffs[#buffs + 1] = { name = aura.name, amount = amount, icon = aura.icon }
+                    break
+                end
+            end
+        end
+    end
+    return buffs
+end
+
+function BB:GetFishingBuffs(fishing)
+    if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) or InCombatLockdown() then
+        return lastFishingBuffs
+    end
+    local ok, buffs = pcall(ReadFishingBuffs, fishing)
+    if ok then lastFishingBuffs = buffs end
+    return lastFishingBuffs
+end
+
 -- Returns a list of { name, amount, icon, itemID } and their total
 function BB:GetFishingSkillBreakdown()
     local list, total = {}, 0
@@ -488,23 +522,8 @@ function BB:GetFishingSkillBreakdown()
     end
 
     -- Buffs (fishing food and drink, and anything else that mentions Fishing)
-    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-        for i = 1, 40 do
-            local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
-            if not aura then break end
-            if aura.name and not C.IsSecret(aura.name) then
-                local lines = GetAuraLines(i, aura)
-                for j = 2, #lines do
-                    local lower = lines[j]:lower()
-                    local pos = lower:find(fishing, 1, true)
-                    local amount = pos and FishingAmount(lower, pos)
-                    if amount then
-                        Add(aura.name, amount, aura.icon)
-                        break
-                    end
-                end
-            end
-        end
+    for _, buff in ipairs(self:GetFishingBuffs(fishing)) do
+        Add(buff.name, buff.amount, buff.icon)
     end
 
     return list, total
